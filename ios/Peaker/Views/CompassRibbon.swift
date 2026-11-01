@@ -9,26 +9,29 @@ struct CompassRibbon: View {
         GeometryReader { geo in
             let heading = model.cameraPose(size: CGSize(width: 400, height: 800)).azimuth
             Canvas { context, size in
-                let pointsPerDegree = size.width / 90  // 90° visible across the ribbon
-                let mid = size.width / 2
+                let width = Double(size.width), height = Double(size.height)
+                let pointsPerDegree: Double = width / 90  // 90° visible across the ribbon
+                let mid: Double = width / 2
                 let first = Int((heading - 45).rounded(.down))
                 for deg in first...(first + 91) {
-                    let x = mid + (Double(deg) - heading) * pointsPerDegree
+                    let offset: Double = Double(deg) - heading
+                    let x: Double = mid + offset * pointsPerDegree
                     let d = ((deg % 360) + 360) % 360
                     if d % 5 != 0 { continue }
                     let major = d % 45 == 0
+                    let tickLength: Double = major ? 12 : 7
                     var tick = Path()
-                    tick.move(to: CGPoint(x: x, y: size.height - (major ? 12 : 7)))
-                    tick.addLine(to: CGPoint(x: x, y: size.height - 3))
+                    tick.move(to: CGPoint(x: x, y: height - tickLength))
+                    tick.addLine(to: CGPoint(x: x, y: height - 3))
                     context.stroke(tick, with: .color(.white.opacity(major ? 0.9 : 0.4)), lineWidth: major ? 1.5 : 1)
                     if major {
                         let label = Self.cardinal(d)
                         context.draw(Text(label).font(.system(size: 12, weight: .bold))
                             .foregroundStyle(d == 0 ? Color.orange : .white),
-                                     at: CGPoint(x: x, y: size.height / 2 - 4))
+                                     at: CGPoint(x: x, y: height / 2 - 4))
                     } else if d % 15 == 0 {
                         context.draw(Text("\(d)").font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.6)),
-                                     at: CGPoint(x: x, y: size.height / 2 - 4))
+                                     at: CGPoint(x: x, y: height / 2 - 4))
                     }
                 }
             }

@@ -124,18 +124,20 @@ struct PanoramaView: View {
             }
             guard !path.isEmpty else { continue }
             // Aerial perspective: distant ridges are thinner and fainter.
-            let t = min(1, ridge.meanDistance / 120_000)
-            let width = (ridge.isSkyline ? 2.6 : 2.0) - 1.3 * t
-            let opacity = (ridge.isSkyline ? 1.0 : 0.9) - 0.55 * t
-            let color: Color = camera
-                ? .white
-                : Color(red: 0.75 + 0.2 * t, green: 0.82 + 0.13 * t, blue: 0.95)
+            let t: Double = min(1, ridge.meanDistance / 120_000)
+            let baseWidth: Double = ridge.isSkyline ? 2.6 : 2.0
+            let width = CGFloat(baseWidth - 1.3 * t)
+            let baseOpacity: Double = ridge.isSkyline ? 1.0 : 0.9
+            let opacity: Double = baseOpacity - 0.55 * t
+            let red: Double = 0.75 + 0.2 * t
+            let green: Double = 0.82 + 0.13 * t
+            let color: Color = camera ? .white : Color(red: red, green: green, blue: 0.95)
             if camera {
-                context.stroke(path, with: .color(.black.opacity(0.35 * opacity)),
-                               style: StrokeStyle(lineWidth: width + 1.5, lineCap: .round, lineJoin: .round))
+                let shadow = StrokeStyle(lineWidth: width + 1.5, lineCap: .round, lineJoin: .round)
+                context.stroke(path, with: .color(.black.opacity(0.35 * opacity)), style: shadow)
             }
-            context.stroke(path, with: .color(color.opacity(opacity)),
-                           style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
+            context.stroke(path, with: .color(color.opacity(opacity)), style: style)
         }
     }
 
@@ -178,17 +180,21 @@ struct PanoramaView: View {
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height)
         for v in model.visiblePeaks where v.peak.importance >= density.minImportance {
+            let screenWidth = Double(size.width), screenHeight = Double(size.height)
             guard abs(Geo.angleDifference(v.azimuth, viewAz)) <= maxOff,
                   let s = pose.project(azimuth: v.azimuth, altitude: v.altitude),
-                  s.x > -20, s.x < size.width + 20, s.y > 80, s.y < size.height else { continue }
+                  s.x > -20, s.x < screenWidth + 20, s.y > 80, s.y < screenHeight else { continue }
             let name = v.peak.displayName(language: language)
             let detail = [v.peak.elevation.map { model.settings.elevation($0) }, model.settings.distance(v.distance)]
                 .compactMap { $0 }.joined(separator: " · ")
             // Rough text width (13 pt semibold + 11 pt detail) — good enough for collision checks.
-            let width = Double(name.count) * 7.4 + Double(detail.count) * 5.6 + 22
+            let nameWidth: Double = Double(name.count) * 7.4
+            let detailWidth: Double = Double(detail.count) * 5.6
+            let width: Double = nameWidth + detailWidth + 22
             byID[v.id] = (v, name, detail)
             // Prefer important and close peaks.
-            let priority = v.peak.importance + 0.15 * (1 - min(1, v.distance / 100_000))
+            let closeness: Double = 1 - min(1, v.distance / 100_000)
+            let priority: Double = v.peak.importance + 0.15 * closeness
             candidates.append(.init(id: v.id, x: s.x, y: s.y, width: width, priority: priority))
         }
         let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: 150,
