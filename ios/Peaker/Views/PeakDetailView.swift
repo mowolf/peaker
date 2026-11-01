@@ -35,7 +35,7 @@ struct PeakDetailView: View {
                     }
 
                     HStack(spacing: 12) {
-                        if model.mode == .touch {
+                        if !model.isFollowingDevice {
                             Button {
                                 withAnimation(.smooth) {
                                     model.touchYaw = visible.azimuth

@@ -14,7 +14,7 @@ struct PanoramaView: View {
             let labels = layoutLabels(pose: pose, size: size)
             Canvas(rendersAsynchronously: false) { context, size in
                 if let horizon = model.horizon {
-                    if model.mode == .touch {
+                    if !model.showsCamera {
                         drawTerrain(&context, horizon: horizon, pose: pose, size: size)
                     }
                     drawRidges(&context, horizon: horizon, pose: pose, size: size)
@@ -42,7 +42,12 @@ struct PanoramaView: View {
             .onEnded { _ in dragStart = nil }
     }
 
+    /// Drag always works: it turns the view by hand. While following the device it hands control
+    /// back to the finger (like Apple Maps); with the camera shown it aligns the lines with the image instead.
     private func handleDrag(translation: CGSize, size: CGSize) {
+        if dragStart == nil, model.isFollowingDevice, !model.showsCamera {
+            model.setFollowing(false)  // keeps the current direction
+        }
         let pose = model.cameraPose(size: size)
         let halfPixelAngle: Double = atan(0.5 / pose.focalLength)
         let degreesPerPoint: Double = 2.0 * halfPixelAngle * 180.0 / Double.pi
@@ -52,16 +57,14 @@ struct PanoramaView: View {
         guard let start = dragStart else { return }
         let dx: Double = Double(translation.width) * degreesPerPoint
         let dy: Double = Double(translation.height) * degreesPerPoint
-        switch model.mode {
-        case .touch:
+        if model.showsCamera {
+            // Move the overlay with the finger: dragging right moves the lines right.
+            model.headingOffset = start.heading - dx
+            model.pitchOffset = start.pitchOffset + dy
+        } else {
             model.touchYaw = Geo.normalizedDegrees(start.yaw - dx)
             let pitch: Double = start.pitch + dy
             model.touchPitch = Swift.max(-45.0, Swift.min(45.0, pitch))
-        case .camera:
-            guard model.isCalibrating else { return }
-            // Move the overlay with the finger: dragging right turns the overlay right.
-            model.headingOffset = start.heading - dx
-            model.pitchOffset = start.pitchOffset + dy
         }
     }
 
@@ -71,11 +74,20 @@ struct PanoramaView: View {
             .onEnded { _ in zoomStart = nil }
     }
 
+    /// Pinch always zooms: the camera's zoom while it is shown, otherwise the rendered field of view.
     private func handleZoom(magnification: Double) {
-        guard model.mode == .touch, magnification > 0 else { return }
-        if zoomStart == nil { zoomStart = model.touchFieldOfView }
-        let start: Double = zoomStart ?? 55
-        model.touchFieldOfView = Swift.max(8.0, Swift.min(110.0, start / magnification))
+        guard magnification > 0 else { return }
+        if model.showsCamera {
+            if zoomStart == nil { zoomStart = model.cameraZoom }
+            let start: Double = zoomStart ?? 1
+            let zoom: Double = Swift.max(1.0, Swift.min(model.camera.maxZoom, start * magnification))
+            model.cameraZoom = zoom
+            model.camera.setZoom(zoom)
+        } else {
+            if zoomStart == nil { zoomStart = model.touchFieldOfView }
+            let start: Double = zoomStart ?? 55
+            model.touchFieldOfView = Swift.max(8.0, Swift.min(110.0, start / magnification))
+        }
     }
 
     // MARK: - Drawing
@@ -106,7 +118,7 @@ struct PanoramaView: View {
     private func drawRidges(_ context: inout GraphicsContext, horizon: HorizonResult, pose: CameraPose, size: CGSize) {
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height) + 2
-        let camera = model.mode == .camera
+        let camera = model.showsCamera
         let gapLimit = horizon.settings.azimuthStep * 2.5
 
         // Far ridges first so near ones draw on top.

@@ -15,7 +15,7 @@ struct ViewerView: View {
                 TopBar()
                 StatusBanner()
                 Spacer()
-                if model.isCalibrating {
+                if model.showsCamera {
                     CalibrationHint()
                 }
                 ControlBar()
@@ -27,19 +27,13 @@ struct ViewerView: View {
             PeakDetailView(visible: peak)
                 .presentationDetents([.height(340), .large])
         }
-        .sheet(isPresented: $model.showDownloads) {
-            DownloadsView()
-        }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView()
-        }
         .onChange(of: model.settings.maxDistanceKm) { Task { await model.recompute() } }
         .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
     }
 
     @ViewBuilder private var background: some View {
-        if model.mode == .camera && model.camera.isAuthorized {
+        if model.showsCamera && model.camera.isAuthorized {
             CameraPreview(session: model.camera.session)
                 .ignoresSafeArea()
         } else {
@@ -156,33 +150,25 @@ private struct StatusBanner: View {
     var body: some View {
         Group {
             if model.noDataHere {
-                banner(icon: "arrow.down.circle", text: "No elevation data here yet.", action: "Download") {
-                    model.showDownloads = true
-                }
-            } else if let h = model.horizon, h.missingFraction > 0.25, !model.isUsingDemoViewpoint {
-                banner(icon: "square.dashed", text: "Parts of the view need more downloads.", action: "Download") {
-                    model.showDownloads = true
-                }
-            } else if model.mode == .camera && model.motion.isCompassUncertain {
-                banner(icon: "exclamationmark.triangle", text: "Compass is inaccurate. Move the phone in a figure 8.",
-                       action: nil, perform: nil)
+                banner(icon: "square.dashed", text: "No offline elevation data here yet. Try a viewpoint from the menu above.")
+            } else if let h = model.horizon, h.missingFraction > 0.25 {
+                banner(icon: "square.dashed", text: "Part of the view is outside the offline data.")
+            } else if model.isFollowingDevice && model.motion.isCompassUncertain {
+                banner(icon: "exclamationmark.triangle", text: "Compass is inaccurate. Move the phone in a figure 8.")
+            } else if model.camera.isDenied && model.showsCamera {
+                banner(icon: "camera", text: "Camera access is off. Allow it in Settings › Peaker.")
             }
         }
         .transition(.move(edge: .top).combined(with: .opacity))
         .animation(.smooth, value: model.noDataHere)
     }
 
-    private func banner(icon: String, text: String, action: String?, perform: (() -> Void)?) -> some View {
+    private func banner(icon: String, text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
             Text(text)
                 .font(.footnote.weight(.medium))
                 .lineLimit(2)
-            if let action, let perform {
-                Button(action, action: perform)
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.small)
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -190,6 +176,7 @@ private struct StatusBanner: View {
     }
 }
 
+/// While the camera is shown, dragging aligns the lines with the image (compass error).
 private struct CalibrationHint: View {
     @Environment(AppModel.self) private var model
 
@@ -197,24 +184,24 @@ private struct CalibrationHint: View {
         HStack(spacing: 12) {
             Image(systemName: "hand.draw")
                 .font(.title3)
-            Text("Drag to line up the ridges with the real mountains.")
+            Text(model.isAlignedByHand ? "Aligned by hand." : "Lines off? Drag to line them up with the mountains.")
                 .font(.footnote.weight(.medium))
-            Button("Reset") {
-                model.headingOffset = 0
-                model.pitchOffset = 0
+            if model.isAlignedByHand {
+                Button("Reset") { model.resetAlignment() }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassEffect(.regular.tint(.orange.opacity(0.25)), in: .rect(cornerRadius: 20))
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .transition(.blurReplace)
     }
 }
 
 // MARK: - Bottom controls
 
+/// Gyro (automatic direction) and camera toggles on the left, compass on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
     @Namespace private var glass
@@ -222,56 +209,73 @@ private struct ControlBar: View {
     var body: some View {
         GlassEffectContainer(spacing: 16) {
             HStack(spacing: 12) {
-                Button {
-                    withAnimation(.smooth) {
-                        model.setMode(model.mode == .camera ? .touch : .camera)
-                    }
-                } label: {
-                    Label(model.mode == .camera ? "Touch mode" : "Camera mode",
-                          systemImage: model.mode == .camera ? "hand.point.up.left.fill" : "camera.fill")
-                        .labelStyle(.iconOnly)
-                        .font(.title3)
-                        .frame(width: 52, height: 52)
+                ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
+                             icon: "gyroscope", isOn: model.isFollowingDevice) {
+                    model.setFollowing(!model.isFollowingDevice)
                 }
-                .glassEffect(.regular.interactive(), in: .circle)
-                .glassEffectID("mode", in: glass)
+                .glassEffectID("follow", in: glass)
+                .disabled(!model.motion.isAvailable)
 
-                if model.mode == .camera {
-                    Button {
-                        withAnimation(.smooth) { model.isCalibrating.toggle() }
-                    } label: {
-                        Label("Calibrate", systemImage: "scope")
-                            .labelStyle(.iconOnly)
-                            .font(.title3)
-                            .frame(width: 52, height: 52)
-                    }
-                    .glassEffect(model.isCalibrating ? Glass.regular.tint(.orange).interactive() : Glass.regular.interactive(),
-                                 in: .circle)
-                    .glassEffectID("calibrate", in: glass)
+                ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
+                             icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
+                    model.setCamera(!model.showsCamera)
                 }
+                .glassEffectID("camera", in: glass)
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: 0) {
-                    Button { model.showDownloads = true } label: {
-                        Label("Offline maps", systemImage: "arrow.down.circle")
-                            .labelStyle(.iconOnly)
-                            .font(.title3)
-                            .frame(width: 52, height: 52)
-                    }
-                    Button { model.showSettings = true } label: {
-                        Label("Settings", systemImage: "gearshape")
-                            .labelStyle(.iconOnly)
-                            .font(.title3)
-                            .frame(width: 52, height: 52)
-                    }
-                }
-                .padding(.horizontal, 4)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .glassEffectID("menu", in: glass)
+                CompassButton()
+                    .glassEffectID("compass-button", in: glass)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
+            .animation(.smooth, value: model.isFollowingDevice)
+            .animation(.smooth, value: model.showsCamera)
         }
+    }
+}
+
+private struct ToggleButton: View {
+    let title: String
+    let icon: String
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .frame(width: 52, height: 52)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(isOn ? Glass.regular.tint(.orange).interactive() : Glass.regular.interactive(), in: .circle)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// Needle pointing north on screen. Tap: look north (and stop following the phone).
+private struct CompassButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let heading: Double = model.cameraPose(size: CGSize(width: 400, height: 800)).azimuth
+        Button {
+            withAnimation(.smooth) { model.faceNorth() }
+        } label: {
+            ZStack {
+                Image(systemName: "location.north.fill")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+                    .rotationEffect(.degrees(-heading))
+                Text("N")
+                    .font(.system(size: 9, weight: .heavy))
+                    .offset(y: -19)
+                    .rotationEffect(.degrees(-heading))
+            }
+            .frame(width: 52, height: 52)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Compass, heading \(Int(heading.rounded())) degrees. Tap to face north.")
     }
 }

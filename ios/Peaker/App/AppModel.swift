@@ -4,10 +4,6 @@ import Observation
 import PeakerKit
 import SwiftUI
 
-enum ViewMode: String {
-    case camera, touch
-}
-
 /// Fixed viewpoints inside the bundled packs, for trying the app anywhere (and as fallback without GPS).
 struct Viewpoint: Identifiable, Hashable {
     let id: String
@@ -37,7 +33,10 @@ final class AppModel {
     let motion = MotionService()
     let camera = CameraService()
 
-    var mode: ViewMode = .touch
+    /// Direction follows the device (gyro + compass). Off = the user drags the view.
+    private(set) var isFollowingDevice = false
+    /// Live camera behind the lines (only while following the device).
+    private(set) var showsCamera = false
 
     // Result of the last horizon computation.
     private(set) var observer: GeoCoordinate?
@@ -47,19 +46,20 @@ final class AppModel {
     private(set) var isComputing = false
     private(set) var noDataHere = false
 
-    // Touch mode: virtual camera.
+    // Manual view direction and zoom (zoom also applies while following without the camera).
     var touchYaw: Double = 255
     var touchPitch: Double = 3
+    /// Horizontal field of view of the rendered view (degrees); pinch to change.
     var touchFieldOfView: Double = 55
+    /// Camera zoom factor (1 = widest); pinch to change while the camera is shown.
+    var cameraZoom: Double = 1
 
-    // Camera mode: compass calibration.
+    /// Hand alignment on top of the sensors (compass error); drag while the camera is shown.
     var headingOffset: Double = 0
     var pitchOffset: Double = 0
-    var isCalibrating = false
+    var isAlignedByHand: Bool { headingOffset != 0 || pitchOffset != 0 }
 
     var selectedPeak: VisiblePeak?
-    var showDownloads = false
-    var showSettings = false
 
     private struct ComputeKey: Equatable {
         var viewpoint: GeoCoordinate
@@ -129,35 +129,59 @@ final class AppModel {
             Task { @MainActor in await self?.recompute() }
         }
         location.requestAndStart()
-        if camera.isAuthorized {
-            setMode(.camera)
-        }
+        setFollowing(true)  // start with automatic direction when the device has the sensors
         await recompute(force: true)
         await packs.refreshCatalog()
     }
 
-    func setMode(_ newMode: ViewMode) {
-        mode = newMode
-        isCalibrating = false
-        switch newMode {
-        case .camera:
+    /// Turn automatic direction (gyro + compass) on or off. Turning it off keeps the current view.
+    func setFollowing(_ on: Bool) {
+        guard on != isFollowingDevice else { return }
+        if on {
+            guard motion.isAvailable else { return }
             motion.start()
-            camera.start()
-        case .touch:
-            camera.stop()
-            motion.stop()
-            // Continue in touch mode where the camera was pointing.
+            isFollowingDevice = true
+        } else {
             if let pose = currentDevicePose(size: CGSize(width: 400, height: 800)) {
                 touchYaw = pose.azimuth
-                touchPitch = max(-30, min(30, pose.pitch))
+                touchPitch = max(-45, min(45, pose.pitch))
             }
+            setCamera(false)
+            isFollowingDevice = false
+            motion.stop()
         }
+    }
+
+    /// Show or hide the live camera. The camera needs automatic direction, so it turns that on.
+    func setCamera(_ on: Bool) {
+        guard on != showsCamera else { return }
+        if on {
+            setFollowing(true)
+            guard isFollowingDevice else { return }
+            camera.start()
+            camera.setZoom(cameraZoom)
+            showsCamera = true
+        } else {
+            camera.stop()
+            showsCamera = false
+        }
+    }
+
+    /// Compass button: look north (stops following the device).
+    func faceNorth() {
+        setFollowing(false)
+        touchYaw = 0
+    }
+
+    func resetAlignment() {
+        headingOffset = 0
+        pitchOffset = 0
     }
 
     // MARK: - Camera pose
 
     func cameraPose(size: CGSize) -> CameraPose {
-        if mode == .camera, let pose = currentDevicePose(size: size) {
+        if isFollowingDevice, let pose = currentDevicePose(size: size) {
             return pose
         }
         let focal = CameraPose.focalLength(fieldOfView: touchFieldOfView, pixelsAcross: size.width)
@@ -167,8 +191,15 @@ final class AppModel {
 
     private func currentDevicePose(size: CGSize) -> CameraPose? {
         guard let q = motion.attitude else { return nil }
-        // Preview is aspect-filled in portrait: the camera's long side (videoFieldOfView) spans the screen height.
-        let focal = CameraPose.focalLength(fieldOfView: camera.fieldOfView, pixelsAcross: size.height)
+        let focal: Double
+        if showsCamera {
+            // Preview is aspect-filled in portrait: the camera's long side spans the screen height.
+            let halfAngle: Double = camera.fieldOfView * Double.pi / 360
+            let zoomedHalfAngle: Double = atan(tan(halfAngle) / max(1, cameraZoom))
+            focal = Double(size.height) / 2 / tan(zoomedHalfAngle)
+        } else {
+            focal = CameraPose.focalLength(fieldOfView: touchFieldOfView, pixelsAcross: size.width)
+        }
         return CameraPose(deviceAttitude: q, focalLength: focal, centerX: size.width / 2, centerY: size.height / 2)
             .rotatedYaw(by: headingOffset)
             .pitched(by: pitchOffset)
