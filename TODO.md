@@ -5,6 +5,8 @@ GPS, the compass/gyro (or a manual touch mode) and offline elevation data to dra
 visible ridge lines and label the peaks.
 
 Each item has an ID (e.g. `D-3`) so it can be turned into a GitHub issue later.
+Decisions and measurements: [`docs/decisions.md`](docs/decisions.md). Data formats:
+[`docs/tile-format.md`](docs/tile-format.md), [`docs/pack-format.md`](docs/pack-format.md). Pipeline: [`pipeline/`](pipeline/README.md).
 Milestones are listed roughly in order, but the **data pipeline (D, P, K)** and the
 **iOS app (A, T, R, M)** can be worked on in parallel once milestone 0 is done.
 
@@ -14,23 +16,23 @@ Milestones are listed roughly in order, but the **data pipeline (D, P, K)** and 
 
 These choices affect everything after them, so settle them first.
 
-- [ ] **F-1** Choose the elevation source(s) (see the source table below). Proposal: **Copernicus GLO-90**
+- [x] **F-1** Choose the elevation source(s) (see the source table below). Proposal: **Copernicus GLO-90**
       as the base layer everywhere, **Copernicus GLO-30** as an optional high-detail layer.
-- [ ] **F-2** Choose the tiling scheme. Proposal: **1°×1° lat/lon tiles** (same as Copernicus/SRTM), named
+- [x] **F-2** Choose the tiling scheme. Proposal: **1°×1° lat/lon tiles** (same as Copernicus/SRTM), named
       `N46E007`. A country pack is then a *list of tiles*, and tiles shared by neighbouring
       countries are stored only once on the device.
-- [ ] **F-3** Choose the tile encoding. Benchmark size and decode speed on ~20 mountain tiles:
+- [x] **F-3** Choose the tile encoding. Benchmark size and decode speed on ~20 mountain tiles:
   - 16-bit grayscale PNG (metres + offset), decoded with ImageIO
   - Terrarium RGB PNG: `h = (R·256 + G + B/256) − 32768`
   - Raw int16 + LZFSE/zstd (Apple `Compression` framework)
   - Lossless WebP / LERC
-- [ ] **F-4** Set the maximum view distance (proposal: 250 km) and the **border buffer** for country packs.
+- [x] **F-4** Set the maximum view distance (proposal: 250 km) and the **border buffer** for country packs.
       Ridges are often visible across borders (e.g. the Alps from southern Germany), so a pack should
       include tiles within X km of the border, or the app should suggest neighbouring packs.
-- [ ] **F-5** Define a **stable peak ID** (needed by the V2 diary). OSM node IDs can change when a node is
+- [x] **F-5** Define a **stable peak ID** (needed by the V2 diary). OSM node IDs can change when a node is
       deleted and recreated. Proposal: `wd:Q1374` if a Wikidata ID exists, else `osm:n123456`. Keep an
       alias table across dataset versions, and use coordinates as a fallback when matching.
-- [ ] **F-6** Review licenses and write `ATTRIBUTION.md` (Copernicus, OSM ODbL share-alike for the peak DB,
+- [x] **F-6** Review licenses and write `ATTRIBUTION.md` (Copernicus, OSM ODbL share-alike for the peak DB,
       GeoNames CC BY, Natural Earth public domain).
 - [ ] **F-7** Choose hosting for data packs. Proposal: Cloudflare R2 (no egress fees) behind a custom domain,
       with versioned paths `/v1/...`.
@@ -57,32 +59,37 @@ These choices affect everything after them, so settle them first.
 
 Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
-- [ ] **D-1** Set up `pipeline/` (uv/poetry, rasterio, numpy, shapely, pyproj, osmium) with a Dockerfile so GDAL versions match everywhere.
-- [ ] **D-2** Download/mirror the Copernicus GLO-90 (and GLO-30) tiles from `s3://copernicus-dem-90m` / `-30m`.
-- [ ] **D-3** Normalise tiles: one CRS (EPSG:4326), integer metres, sea/no-data → 0, fill voids (interpolate or use another source).
-- [ ] **D-4** Encode tiles in the format chosen in F-3 and write a per-tile JSON sidecar (bounds, resolution, min/max height, SHA-256, size).
+- [x] **D-1** Set up `pipeline/` (uv/poetry, rasterio, numpy, shapely, pyproj, osmium) with a Dockerfile so GDAL versions match everywhere.
+- [x] **D-2** Download/mirror the Copernicus GLO-90 (and GLO-30) tiles from `s3://copernicus-dem-90m` / `-30m`.
+- [x] **D-3** Normalise tiles: one CRS (EPSG:4326), integer metres, sea/no-data → 0, fill voids (interpolate or use another source).
+- [x] **D-4** Encode tiles in the format chosen in F-3 and write a per-tile JSON sidecar (bounds, resolution, min/max height, SHA-256, size).
 - [ ] **D-5** Optional: build multi-resolution levels (e.g. 30 m / 90 m / 270 m) so far-away terrain loads cheaply.
-- [ ] **D-6** Validate: spot-check known summits (tile height vs official height), check tile seams, plot hillshades.
-- [ ] **D-7** Size report: MB per country at each resolution, to decide whether GLO-30 is affordable for large countries (RU, CA, US, CN…).
+- [ ] **D-6** *(partly: `reports/<CC>.json` compares official vs DEM summit heights)* Validate: spot-check known summits (tile height vs official height), check tile seams, plot hillshades.
+- [x] **D-7** Size report: MB per country at each resolution, to decide whether GLO-30 is affordable for large countries (RU, CA, US, CN…).
 
 ## Milestone 2 — Peak data pipeline
 
-- [ ] **P-1** Extract `natural=peak`, `natural=volcano` (optionally `mountain_pass`, `saddle`) from the OSM planet or Geofabrik extracts.
-- [ ] **P-2** Join with Wikidata (multilingual names, prominence, Wikipedia URL, image).
-- [ ] **P-3** Merge GeoNames peaks that are missing from OSM (deduplicate by distance + name similarity).
-- [ ] **P-4** Fill in missing `ele` from the DEM. Flag large mismatches between tagged and DEM height.
-- [ ] **P-5** Compute or estimate **prominence**, used to decide which labels to show when there are too many.
-- [ ] **P-6** Assign stable IDs (F-5) and keep the alias table between dataset versions.
-- [ ] **P-7** Write a per-country SQLite DB: `peaks(id, name, names_json, lat, lon, ele, prominence, wikidata, osm_id)`
+- [x] **P-1** *(code + tests done; not yet run on a real Geofabrik extract, which was unreachable from the dev container)* Extract `natural=peak`, `natural=volcano` (optionally `mountain_pass`, `saddle`) from the OSM planet or Geofabrik extracts.
+- [x] **P-2** Join with Wikidata (multilingual names, prominence, Wikipedia URL, image).
+- [x] **P-3** Merge GeoNames peaks that are missing from OSM (deduplicate by distance + name similarity).
+- [x] **P-4** Fill in missing `ele` from the DEM. Flag large mismatches between tagged and DEM height.
+- [ ] **P-5** *(partly: isolation + `importance` score done; prominence only where OSM/Wikidata tag it)* Compute
+      **prominence** from the DEM, used to decide which labels to show when there are too many.
+- [x] **P-6** Assign stable IDs (F-5) and keep the alias table between dataset versions.
+- [x] **P-7** Write a per-country SQLite DB: `peaks(id, name, names_json, lat, lon, ele, prominence, wikidata, osm_id)`
       + R-tree spatial index + FTS5 for name search.
 
 ## Milestone 3 — Country packs & hosting
 
-- [ ] **K-1** For each country: tiles = tiles intersecting (country polygon + buffer from F-4).
-- [ ] **K-2** Write `catalog.json`: dataset version, and per country the ISO 3166-1 code, localised name,
+- [x] **K-1** For each country: tiles = tiles intersecting (country polygon + buffer from F-4).
+- [x] **K-2** Write `catalog.json`: dataset version, and per country the ISO 3166-1 code, localised name,
       bbox, tile list, peak DB URL, total size and checksums.
 - [ ] **K-3** Upload to hosting (F-7) with immutable versioned paths and correct cache headers.
 - [ ] **K-4** CI job (GitHub Actions) to rebuild the peak DBs on a schedule (OSM changes often; the DEM rarely does).
+- [ ] **K-6** Regions for large countries (US ≈ 1.5 GB, RU, CA, CN, BR, AU at 90 m): split by admin-1
+      (Natural Earth states/provinces) or named mountain regions. The format already supports this.
+- [ ] **K-7** Summit burn-in: raise the DEM around each peak to its official height (the DEM cuts sharp summits
+      100–150 m too low, e.g. Matterhorn).
 - [ ] **K-5** Small **bundled demo pack** (e.g. one Alps tile set + peaks) so the app works on first launch and in tests.
 
 ## Milestone 4 — iOS app skeleton
