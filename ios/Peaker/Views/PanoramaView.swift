@@ -34,40 +34,48 @@ struct PanoramaView: View {
 
     // MARK: - Gestures
 
+    // Gesture handlers are plain methods: big multi-statement closures inside gesture chains are slow
+    // for the type checker.
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                let pose = model.cameraPose(size: size)
-                let degreesPerPoint = 2 * atan(0.5 / pose.focalLength) * 180 / .pi
-                if dragStart == nil {
-                    dragStart = (model.touchYaw, model.touchPitch, model.headingOffset, model.pitchOffset)
-                }
-                guard let start = dragStart else { return }
-                let dx = Double(value.translation.width) * degreesPerPoint
-                let dy = Double(value.translation.height) * degreesPerPoint
-                switch model.mode {
-                case .touch:
-                    model.touchYaw = Geo.normalizedDegrees(start.yaw - dx)
-                    model.touchPitch = max(-45, min(45, start.pitch + dy))
-                case .camera where model.isCalibrating:
-                    // Move the overlay with the finger: positive drag right turns the overlay right.
-                    model.headingOffset = start.heading - dx
-                    model.pitchOffset = start.pitchOffset + dy
-                case .camera:
-                    break
-                }
-            }
+            .onChanged { value in handleDrag(translation: value.translation, size: size) }
             .onEnded { _ in dragStart = nil }
+    }
+
+    private func handleDrag(translation: CGSize, size: CGSize) {
+        let pose = model.cameraPose(size: size)
+        let halfPixelAngle: Double = atan(0.5 / pose.focalLength)
+        let degreesPerPoint: Double = 2.0 * halfPixelAngle * 180.0 / Double.pi
+        if dragStart == nil {
+            dragStart = (model.touchYaw, model.touchPitch, model.headingOffset, model.pitchOffset)
+        }
+        guard let start = dragStart else { return }
+        let dx: Double = Double(translation.width) * degreesPerPoint
+        let dy: Double = Double(translation.height) * degreesPerPoint
+        switch model.mode {
+        case .touch:
+            model.touchYaw = Geo.normalizedDegrees(start.yaw - dx)
+            let pitch: Double = start.pitch + dy
+            model.touchPitch = Swift.max(-45.0, Swift.min(45.0, pitch))
+        case .camera:
+            guard model.isCalibrating else { return }
+            // Move the overlay with the finger: dragging right turns the overlay right.
+            model.headingOffset = start.heading - dx
+            model.pitchOffset = start.pitchOffset + dy
+        }
     }
 
     private var zoomGesture: some Gesture {
         MagnifyGesture()
-            .onChanged { value in
-                guard model.mode == .touch else { return }
-                if zoomStart == nil { zoomStart = model.touchFieldOfView }
-                model.touchFieldOfView = max(8, min(110, (zoomStart ?? 55) / Double(value.magnification)))
-            }
+            .onChanged { value in handleZoom(magnification: Double(value.magnification)) }
             .onEnded { _ in zoomStart = nil }
+    }
+
+    private func handleZoom(magnification: Double) {
+        guard model.mode == .touch, magnification > 0 else { return }
+        if zoomStart == nil { zoomStart = model.touchFieldOfView }
+        let start: Double = zoomStart ?? 55
+        model.touchFieldOfView = Swift.max(8.0, Swift.min(110.0, start / magnification))
     }
 
     // MARK: - Drawing

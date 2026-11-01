@@ -7,7 +7,7 @@ enum PeakDatabase {
     /// Peaks within `radius` metres (bounding box) from all databases, de-duplicated by stable ID.
     static func peaks(in databases: [URL], center: GeoCoordinate, radius: Double) -> [PeakInfo] {
         let dLat = radius / 111_320
-        let dLon = radius / (111_320 * max(cos(center.latitude * .pi / 180), 0.05))
+        let dLon = radius / (111_320 * max(cos(center.latitude * Double.pi / 180.0), 0.05))
         var seen = Set<String>()
         var out: [PeakInfo] = []
         for url in databases {
