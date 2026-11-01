@@ -17,5 +17,5 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv venv && uv pip install -e '.[dev]'
+      - run: uv venv .venv && uv pip install --python .venv/bin/python -e '.[dev]'
       - run: .venv/bin/python -m pytest -q -m "not network"

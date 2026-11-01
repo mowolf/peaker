@@ -147,7 +147,9 @@ jobs:
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Peaker.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | xcbeautify --renderer github-actions
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/export.log" \
+            || { echo "::error::Export/upload failed. Most common causes: no app record for $BUNDLE_ID in App Store Connect, or the API key lacks the Admin role."; \
+                 grep -iE "error|App Record|bundle|provision|certificat|not found|permission" "$RUNNER_TEMP/export.log" | head -40; exit 1; }
           echo "Uploaded build $BUILD_NUMBER of $BUNDLE_ID to App Store Connect. It shows up in TestFlight after processing (5–30 min)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove API key

@@ -52,8 +52,8 @@ jobs:
       - name: Install pipeline and run unit tests
         working-directory: pipeline
         run: |
-          uv venv
-          uv pip install -e '.[dev]'
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e '.[dev]'
           .venv/bin/python -m pytest -q -m "not network"
 
       # Download cache: Copernicus source tiles, Wikidata per tile, GeoNames, extracted OSM peaks.
