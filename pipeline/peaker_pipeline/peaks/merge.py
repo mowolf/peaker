@@ -65,8 +65,12 @@ def _absorb(base: Peak, other: Peak) -> None:
     for a in other.alt_names:
         if a not in base.alt_names and a != base.name:
             base.alt_names.append(a)
-    if base.ele is None and other.ele is not None:
-        base.ele, base.ele_source = other.ele, other.ele_source
+    if other.ele is not None:
+        if base.ele is None:
+            base.ele, base.ele_source = other.ele, other.ele_source
+        else:
+            base.ele_alts.append((other.ele_source or "?", other.ele))
+    base.ele_alts += other.ele_alts
     base.prominence = base.prominence if base.prominence is not None else other.prominence
     base.wikidata = base.wikidata or other.wikidata
     base.osm_id = base.osm_id if base.osm_id is not None else other.osm_id
@@ -181,4 +185,6 @@ def importance(p: Peak) -> float:
         s += 0.1
     if p.kind == "hill":
         s *= 0.7
+    if "ele_conflict" in p.qa:
+        s *= 0.2  # position or height contradicts the DEM: likely a misplaced label
     return round(min(1.0, s), 4)

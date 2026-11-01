@@ -168,5 +168,6 @@ def rows_to_peaks(rows: list[dict]) -> list[Peak]:
             p.kind = "volcano"
         elif classes[qid] & HILL_CLASSES:
             p.kind = "hill"
-        p.name = p.names.get("en") or next(iter(p.names.values()), None)
+        # No local-language info here, so take the first label in LANGS order (en, de, fr, it, …).
+        p.name = next((p.names[l] for l in LANGS if l in p.names), None)
     return list(by_item.values())

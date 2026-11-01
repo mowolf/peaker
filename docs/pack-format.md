@@ -64,7 +64,7 @@ Tables (schema version 1, `PRAGMA user_version = 1`):
 
 | table | purpose |
 |---|---|
-| `peaks` | one row per peak: `id` (stable, see below), `name`, `names` (JSON lang→name), `lat`, `lon`, `ele`, `ele_source`, `dem_ele`, `prominence`, `isolation_km`, `importance` (0–1 label priority), `kind`, `wikidata`, `osm_id`, `geonames_id`, `wikipedia`, `sources` |
+| `peaks` | one row per peak: `id` (stable, see below), `name`, `names` (JSON lang→name), `lat`, `lon`, `ele`, `ele_source`, `dem_ele`, `prominence`, `isolation_km`, `importance` (0–1 label priority), `kind`, `wikidata`, `osm_id`, `geonames_id`, `wikipedia`, `sources`, `qa` (build-time fixes: `alt_source`, `unit_fixed`, `snapped`, `ele_conflict`) |
 | `peaks_rtree` | R-tree on (lat, lon) for "peaks near me" |
 | `peaks_fts` | FTS5 over names (contentless, diacritics removed) for search |
 | `peak_aliases` | other IDs of the same peak (e.g. `osm:n123` → `wd:Q1374`) |

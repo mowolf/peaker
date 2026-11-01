@@ -64,7 +64,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [x] **D-3** Normalise tiles: one CRS (EPSG:4326), integer metres, sea/no-data → 0, fill voids (interpolate or use another source).
 - [x] **D-4** Encode tiles in the format chosen in F-3 and write a per-tile JSON sidecar (bounds, resolution, min/max height, SHA-256, size).
 - [ ] **D-5** Optional: build multi-resolution levels (e.g. 30 m / 90 m / 270 m) so far-away terrain loads cheaply.
-- [ ] **D-6** *(partly: `reports/<CC>.json` compares official vs DEM summit heights)* Validate: spot-check known summits (tile height vs official height), check tile seams, plot hillshades.
+- [x] **D-6** *(QA report in `reports/<CC>.json` + automatic fixes, see decisions.md; visual hillshade check still open)* Validate: spot-check known summits (tile height vs official height), check tile seams, plot hillshades.
 - [x] **D-7** Size report: MB per country at each resolution, to decide whether GLO-30 is affordable for large countries (RU, CA, US, CN…).
 
 ## Milestone 2 — Peak data pipeline
@@ -84,7 +84,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [x] **K-1** For each country: tiles = tiles intersecting (country polygon + buffer from F-4).
 - [x] **K-2** Write `catalog.json`: dataset version, and per country the ISO 3166-1 code, localised name,
       bbox, tile list, peak DB URL, total size and checksums.
-- [ ] **K-3** Upload to hosting (F-7) with immutable versioned paths and correct cache headers.
+- [ ] **K-3** *(first pack built locally: CH = 23 tiles / 25 MB + 24k peaks / 3.5 MB)* Upload to hosting (F-7) with immutable versioned paths and correct cache headers.
 - [ ] **K-4** CI job (GitHub Actions) to rebuild the peak DBs on a schedule (OSM changes often; the DEM rarely does).
 - [ ] **K-6** Regions for large countries (US ≈ 1.5 GB, RU, CA, CN, BR, AU at 90 m): split by admin-1
       (Natural Earth states/provinces) or named mountain regions. The format already supports this.

@@ -125,3 +125,60 @@ def test_peak_db(tmp_path):
     assert [r[0] for r in con.execute(
         "SELECT p.name FROM peaks_fts f JOIN peaks p ON p.rowid = f.rowid WHERE peaks_fts MATCH 'monch'")] == ["Mönch"]
     assert con.execute("SELECT peak_id FROM peak_aliases WHERE alias = 'osm:n1'").fetchone()[0] == "wd:Q1374"
+
+
+def _cone_grid(peak_lat=45.5, peak_lon=7.5, top=3000.0):
+    """1201×1201 grid with one conical mountain (DEM summit = top)."""
+    import numpy as np
+
+    from peaker_pipeline.dem import Grid
+    from peaker_pipeline.tiles import Resolution, TileId
+
+    n = 1201
+    lat = 46 - np.arange(n) / (n - 1)
+    lon = 7 + np.arange(n) / (n - 1)
+    dy = (lat[:, None] - peak_lat) * 111_320
+    dx = (lon[None, :] - peak_lon) * 111_320 * np.cos(np.radians(45.5))
+    h = np.maximum(500.0, top - 0.5 * np.hypot(dx, dy)).astype(np.float32)  # 50% slope
+    return Grid(TileId(45, 7), Resolution.GLO90, h)
+
+
+def test_resolve_elevation_cases():
+    from peaker_pipeline.peaks.enrich import resolve_elevation
+
+    g = _cone_grid()
+    ok = Peak(45.5, 7.5, name="A", ele=3100, ele_source="osm", sources=["osm"])
+    resolve_elevation(ok, g)
+    assert ok.ele == 3100 and ok.qa == [] and abs(ok.dem_ele - 3000) < 1
+
+    unit = Peak(45.5, 7.5, name="B", ele=3.05, ele_source="wikidata", sources=["wikidata"])
+    resolve_elevation(unit, g)
+    assert unit.ele == 3050 and unit.qa == ["unit_fixed"]
+
+    alt = Peak(45.5, 7.5, name="C", ele=1200, ele_source="wikidata", ele_alts=[("geonames", 2990)],
+               sources=["wikidata", "geonames"])
+    resolve_elevation(alt, g)
+    assert alt.ele == 2990 and alt.ele_source == "geonames" and alt.qa == ["alt_source"]
+
+    # Wikidata position ~1 km off the summit: snapped onto the DEM maximum
+    off = Peak(45.5 + 0.009, 7.5, name="D", ele=3010, ele_source="wikidata", sources=["wikidata"])
+    resolve_elevation(off, g)
+    assert off.qa == ["snapped"] and abs(off.lat - 45.5) < 0.001 and off.ele == 3010
+
+    # Same, but from OSM: OSM positions are trusted, so no snapping
+    off_osm = Peak(45.5 + 0.009, 7.5, name="E", ele=3010, ele_source="osm", sources=["osm"])
+    resolve_elevation(off_osm, g)
+    assert off_osm.qa == ["ele_conflict"] and off_osm.ele_source == "dem" and off_osm.ele_alts[0] == ("osm", 3010)
+
+
+def test_wikidata_name_prefers_language_order():
+    rows = [{"item": {"value": "http://www.wikidata.org/entity/Q5"}, "lat": {"value": "47"}, "lon": {"value": "8"}},
+            {"item": {"value": "http://www.wikidata.org/entity/Q5"}, "label": {"value": "蓋斯貝格山"}, "lang": {"value": "zh"}},
+            {"item": {"value": "http://www.wikidata.org/entity/Q5"}, "label": {"value": "Geissberg"}, "lang": {"value": "de"}}]
+    assert rows_to_peaks(rows)[0].name == "Geissberg"
+
+
+def test_importance_penalises_conflicts():
+    a = Peak(46, 7, name="A", prominence=500)
+    b = Peak(46, 7, name="B", prominence=500, qa=["ele_conflict"])
+    assert importance(b) < importance(a) / 4

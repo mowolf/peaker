@@ -60,13 +60,22 @@ class Grid:
 
     def max_near(self, lat: float, lon: float, radius_m: float) -> float:
         """Highest grid value within ``radius_m`` (square window) — used to check summits."""
+        return self.argmax_near(lat, lon, radius_m)[0]
+
+    def argmax_near(self, lat: float, lon: float, radius_m: float) -> tuple[float, float, float]:
+        """(height, lat, lon) of the highest grid point within ``radius_m`` (square window, clipped to the tile)."""
         r, c = self.index_of(lat, lon)
         dr = max(1, int(np.ceil(radius_m / 111_320 * (self.rows - 1))))
         coslat = max(np.cos(np.radians(lat)), 0.01)
         dc = max(1, int(np.ceil(radius_m / (111_320 * coslat) * (self.cols - 1))))
         r, c = int(round(r)), int(round(c))
-        win = self.heights[max(0, r - dr) : r + dr + 1, max(0, c - dc) : c + dc + 1]
-        return float(win.max()) if win.size else float("nan")
+        r0, c0 = max(0, r - dr), max(0, c - dc)
+        win = self.heights[r0 : r + dr + 1, c0 : c + dc + 1]
+        if not win.size:
+            return float("nan"), lat, lon
+        i, j = np.unravel_index(int(np.argmax(win)), win.shape)
+        plat, plon = self.latlon_of(r0 + int(i), c0 + int(j))
+        return float(win[i, j]), plat, plon
 
 
 class TileSource:

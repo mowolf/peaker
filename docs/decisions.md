@@ -90,6 +90,25 @@ re-creation and are shared across languages).
   only become new peaks when nothing else is nearby.
 - Merge rules: `pipeline/peaker_pipeline/peaks/merge.py` (by ID, then name + 600 m, then 150 m when unnamed).
 
+## Peak elevation and position QA (measured on the CH pack)
+
+The CH pack (CH + 50 km: 23 tiles, 23,986 peaks from Wikidata + GeoNames, no OSM yet) showed how dirty
+the sources are. 943 peaks had an official height more than 150 m away from the DEM. Typical causes:
+unit typos in Wikidata ("2.257" for 2,257 m, from the Italian thousands separator) and coordinates kilometres
+off the summit. `peaks/enrich.py` now repairs them, with the DEM as the referee:
+
+| fix | count | what it does |
+|---|---:|---|
+| `alt_source` | 404 | another source's height agrees with the DEM, so use it |
+| `unit_fixed` | 7 | value × 1000 agrees with the DEM |
+| `snapped` | 141 | non-OSM peak moved to the highest DEM point within 1.5 km that matches its height |
+| `ele_conflict` | 535 (2.2%) | nothing fits: DEM height used, label importance × 0.2 so the app hides it by default |
+
+The remaining official heights are a median of +12 m above the DEM (p90 |diff| 69 m). That is the DEM's
+summit cut-off, not an error. Some sharp peaks are much lower in the DEM (Dent d'Hérens 4,173 m vs 3,978 m),
+hence K-7 (summit burn-in). Wikidata also includes hills (`Q54050`, 3,830 in CH) even without `--hills`;
+they get a lower importance (× 0.7).
+
 ## F-6 Licences (summary; full text goes into the app's Licenses screen)
 
 | data | licence | obligation |

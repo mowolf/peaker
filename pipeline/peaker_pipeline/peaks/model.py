@@ -16,7 +16,9 @@ class Peak:
     alt_names: list[str] = field(default_factory=list)  # searchable, language unknown
     ele: float | None = None  # metres, from a tagged/official source
     ele_source: str | None = None  # "osm" | "wikidata" | "geonames" | "dem"
+    ele_alts: list[tuple[str, float]] = field(default_factory=list)  # other sources' values, for QA
     dem_ele: float | None = None  # highest DEM value near the summit (DEM underestimates sharp peaks)
+    qa: list[str] = field(default_factory=list)  # e.g. "unit_fixed", "snapped", "ele_conflict"
     prominence: float | None = None
     isolation_km: float | None = None
     kind: str = "peak"  # peak | volcano | hill | mountain
