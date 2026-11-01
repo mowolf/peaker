@@ -8,12 +8,16 @@ enum PeakDatabase {
     static func peaks(in databases: [URL], center: GeoCoordinate, radius: Double) -> [PeakInfo] {
         let dLat = radius / 111_320
         let dLon = radius / (111_320 * max(cos(center.latitude * Double.pi / 180.0), 0.05))
+        return peaks(in: databases, south: center.latitude - dLat, north: center.latitude + dLat,
+                     west: center.longitude - dLon, east: center.longitude + dLon)
+    }
+
+    /// Peaks inside a lat/lon box from all databases, de-duplicated by stable ID.
+    static func peaks(in databases: [URL], south: Double, north: Double, west: Double, east: Double) -> [PeakInfo] {
         var seen = Set<String>()
         var out: [PeakInfo] = []
         for url in databases {
-            for p in query(url, south: center.latitude - dLat, north: center.latitude + dLat,
-                           west: center.longitude - dLon, east: center.longitude + dLon)
-            where seen.insert(p.id).inserted {
+            for p in query(url, south: south, north: north, west: west, east: east) where seen.insert(p.id).inserted {
                 out.append(p)
             }
         }

@@ -50,3 +50,29 @@ import Testing
     #expect(m.tiles["90"]?.first?.name == "N45E007")
     #expect(m.peaks.uncompressedBytes == 9_031_680)
 }
+
+@Test func labelsKeepTheirPreviousRow() {
+    let a = LabelLayout.Candidate(id: "a", x: 100, y: 400, width: 80, priority: 0.9)
+    let b = LabelLayout.Candidate(id: "b", x: 120, y: 400, width: 80, priority: 0.5)
+    let first = LabelLayout.place([a, b])
+    #expect(first.first { $0.id == "a" }?.row == 0)
+    // Next frame b is slightly more important, but both stay where they were.
+    let prev = Dictionary(uniqueKeysWithValues: first.map { ($0.id, $0.row) })
+    let b2 = LabelLayout.Candidate(id: "b", x: 121, y: 400, width: 80, priority: 0.95)
+    let second = LabelLayout.place([a, b2], previous: prev)
+    #expect(Dictionary(uniqueKeysWithValues: second.map { ($0.id, $0.row) }) == prev)
+}
+
+@Test func labelsFlipLeftAtTheRightEdge() {
+    let c = LabelLayout.Candidate(id: "edge", x: 380, y: 400, width: 120, priority: 1)
+    let placed = LabelLayout.place([c], maxX: 400)
+    let p = try! #require(placed.first)
+    #expect(p.x + p.width <= 400 && p.x < 380)
+}
+
+@Test func stickinessKeepsShownLabelsOverSlightlyMoreImportantNewOnes() {
+    let old = LabelLayout.Candidate(id: "old", x: 100, y: 400, width: 80, priority: 0.5)
+    let new = LabelLayout.Candidate(id: "new", x: 100, y: 400, width: 80, priority: 0.6)
+    let placed = LabelLayout.place([old, new], rows: 1, previous: ["old": 0])
+    #expect(placed.map(\.id) == ["old"])
+}

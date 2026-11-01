@@ -236,7 +236,8 @@ final class AppModel {
             var horizonSettings = HorizonSettings()
             horizonSettings.maxDistance = maxDistance
             let ids = TileID.covering(center: target, radius: maxDistance)
-            let tiles = await loader.tiles(ids, files: snapshot.tileFiles)
+            let tiles = await loader.tiles(ids, files: snapshot.tileFiles, peakDatabases: snapshot.peakDatabases,
+                                           version: packVersion)
             let terrain = TerrainModel(covering: ids, tiles: tiles) { id in
                 snapshot.landTiles?.contains(id)
             }

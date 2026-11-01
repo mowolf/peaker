@@ -6,6 +6,12 @@ struct PanoramaView: View {
     @Environment(AppModel.self) private var model
     @State private var dragStart: (yaw: Double, pitch: Double, heading: Double, pitchOffset: Double)?
     @State private var zoomStart: Double?
+    /// Rows used in the last frame, so labels stay put while the view moves (not observed: no redraws).
+    @State private var labelMemory = LabelMemory()
+
+    final class LabelMemory {
+        var rows: [String: Int] = [:]
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -194,12 +200,18 @@ struct PanoramaView: View {
 
     private func layoutLabels(pose: CameraPose, size: CGSize) -> [PlacedLabel] {
         let density = model.settings.labelDensity
+        // Zoom: compare the horizontal field of view with the default 55°. Zoomed in, peaks spread out,
+        // so show more and smaller peaks; zoomed out, only the most important ones.
+        let fieldOfView: Double = 2 * atan(Double(size.width) / 2 / pose.focalLength) * 180 / Double.pi
+        let zoom: Double = Swift.max(0.4, Swift.min(4.0, 55.0 / fieldOfView))
+        let maxLabels: Int = Int((Double(density.maxLabels) * Swift.min(2.5, zoom)).rounded())
+        let minImportance: Double = density.minImportance / zoom
         let language = Locale.current.language.languageCode?.identifier
         var byID: [String: (VisiblePeak, String, String)] = [:]
         var candidates: [LabelLayout.Candidate] = []
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height)
-        for v in model.visiblePeaks where v.peak.importance >= density.minImportance {
+        for v in model.visiblePeaks where v.peak.importance >= minImportance {
             let screenWidth = Double(size.width), screenHeight = Double(size.height)
             guard abs(Geo.angleDifference(v.azimuth, viewAz)) <= maxOff,
                   let s = pose.project(azimuth: v.azimuth, altitude: v.altitude),
@@ -222,7 +234,9 @@ struct PanoramaView: View {
             candidates.append(.init(id: v.id, x: s.x, y: s.y, width: width, priority: priority))
         }
         let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: 150,
-                                       maxLabels: density.maxLabels)
+                                       maxX: Double(size.width) - 4, maxLabels: maxLabels,
+                                       previous: labelMemory.rows)
+        labelMemory.rows = Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.row) })
         return placed.compactMap { p in
             guard let entry = byID[p.id] else { return nil }
             return PlacedLabel(peak: entry.0, name: entry.1, detail: entry.2, summit: CGPoint(x: p.summitX, y: p.summitY),

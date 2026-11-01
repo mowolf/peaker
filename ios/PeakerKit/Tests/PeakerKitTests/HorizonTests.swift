@@ -96,3 +96,17 @@ let observer = GeoCoordinate(latitude: 45.3, longitude: 7.5)
     print("full sweep: \(result.azimuthCount) rays × \(result.distances.count) samples in \(elapsed) s, \(result.ridges.count) ridges")
     #expect(result.azimuthCount == 1800)
 }
+
+@Test func labelSnapsToRenderedSummit() {
+    var settings = HorizonSettings()
+    settings.maxDistance = 60_000
+    settings.azimuthStep = 0.5
+    let summit = GeoCoordinate(latitude: 45.48, longitude: 7.5)
+    let result = HorizonEngine.compute(observer: observer, observerHeight: 502, terrain: coneTerrain(), settings: settings)
+    // Coordinates 150 m short of the real summit and an official height 80 m above the DEM:
+    // without snapping the label would float well above the drawn cone.
+    let off = Geo.destination(from: summit, bearing: 180, distance: 150)
+    let peak = PeakInfo(id: "x", name: "Cone", coordinate: off, elevation: 3080, importance: 1)
+    let v = try! #require(result.visiblePeaks([peak]).first)
+    #expect(abs(v.altitude - result.skylineAltitude(azimuth: v.azimuth)) < 0.05)
+}

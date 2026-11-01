@@ -118,7 +118,27 @@ public struct HorizonResult: Sendable {
         let ray = rayIndex(azimuth: az)
         let blocking = Double(cumulativeMaxTan[ray * distances.count + j])
         guard (tanTarget - blocking) * d >= -tolerance else { return nil }
-        return VisiblePeakGeometry(azimuth: az, altitude: altitude, distance: d)
+        return VisiblePeakGeometry(azimuth: az, altitude: snappedAltitude(ray: ray, distance: d) ?? altitude,
+                                   distance: d)
+    }
+
+    /// Altitude of the drawn terrain at a visible summit: the highest angle reached on this and the
+    /// neighbouring rays up to slightly beyond the peak. Labels sit exactly on the rendered top instead of
+    /// floating above it when the peak's coordinates are a little off (very noticeable for close peaks).
+    func snappedAltitude(ray: Int, distance d: Double) -> Double? {
+        let limit = d + max(300, 0.03 * d)
+        var lo = 0, hi = distances.count - 1, j = -1
+        while lo <= hi {  // last sample with distance <= limit
+            let mid = (lo + hi) / 2
+            if distances[mid] <= limit { j = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        guard j >= 0 else { return nil }
+        var best = -Double.infinity
+        for r in [ray - 1, ray, ray + 1] {
+            let wrapped = (r + azimuthCount) % azimuthCount
+            best = max(best, Double(cumulativeMaxTan[wrapped * distances.count + j]))
+        }
+        return best.isFinite ? degrees(atan(best)) : nil
     }
 
     public func visiblePeaks(_ peaks: [PeakInfo], tolerance: Double = 25) -> [VisiblePeak] {
