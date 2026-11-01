@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-wikidata", action="store_true")
     p.add_argument("--no-geonames", action="store_true")
     p.add_argument("--hills", action="store_true", help="also include natural=hill / GeoNames HLL")
+    p.add_argument("--drop-pbf", action="store_true",
+                   help="delete each Geofabrik extract after reading it (saves disk in CI)")
 
     p = sub.add_parser("bench-encoding", help="compare tile encodings (decision F-3)")
     p.add_argument("--res", choices=["90", "30"], default="90")
@@ -67,6 +69,7 @@ def main(argv: list[str] | None = None) -> None:
             use_wikidata=not args.no_wikidata,
             use_geonames=not args.no_geonames,
             include_hills=args.hills,
+            keep_pbf=not args.drop_pbf,
         )
         for code in args.country:
             report = build_pack(code, args.out, args.cache, opts)

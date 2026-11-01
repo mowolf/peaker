@@ -79,7 +79,17 @@ def geofabrik_pbf_urls(cc: str, cache_dir: Path) -> list[str]:
     return [h["urls"]["pbf"] for h in top]
 
 
-def osm_peaks_for_country(cc: str, cache_dir: Path, include_hills: bool = False) -> list[Peak]:
+def osm_peaks_for_country(cc: str, cache_dir: Path, include_hills: bool = False,
+                          keep_pbf: bool = True) -> list[Peak]:
+    """Peaks of one country from Geofabrik.
+
+    The extracted peaks are cached as JSON (``osm-peaks/``), which is tiny compared
+    to the extract. With ``keep_pbf=False`` the .pbf is deleted right after reading,
+    so CI runners never hold more than one extract (Germany/France are ~4.5 GB each).
+    Delete the JSON to refresh (CI prunes it weekly).
+    """
+    import json
+
     from ..http import download
 
     urls = geofabrik_pbf_urls(cc, cache_dir)
@@ -87,8 +97,18 @@ def osm_peaks_for_country(cc: str, cache_dir: Path, include_hills: bool = False)
         raise LookupError(f"no Geofabrik extract for {cc}")
     peaks: list[Peak] = []
     for url in urls:
-        path = Path(cache_dir) / "geofabrik" / url.split("download.geofabrik.de/", 1)[-1]
+        rel = url.split("download.geofabrik.de/", 1)[-1]
+        cached = Path(cache_dir) / "osm-peaks" / (rel.replace("/", "_") + ("-hills" if include_hills else "") + ".json")
+        if cached.exists():
+            peaks += [Peak.from_dict(d) for d in json.loads(cached.read_text())]
+            continue
+        path = Path(cache_dir) / "geofabrik" / rel
         if not path.exists():
-            download(url, path, timeout=600)
-        peaks += read_osm_peaks(path, include_hills=include_hills)
+            download(url, path, timeout=1800)
+        found = read_osm_peaks(path, include_hills=include_hills)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(json.dumps([p.to_dict() for p in found], ensure_ascii=False))
+        if not keep_pbf:
+            path.unlink()
+        peaks += found
     return peaks

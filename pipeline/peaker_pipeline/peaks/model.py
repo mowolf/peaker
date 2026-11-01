@@ -50,6 +50,17 @@ class Peak:
             ids.append(f"gn:{self.geonames_id}")
         return ids
 
+    def to_dict(self) -> dict:
+        from dataclasses import asdict
+
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Peak:
+        d = dict(d)
+        d["ele_alts"] = [tuple(a) for a in d.get("ele_alts", [])]
+        return cls(**d)
+
     def display_name(self, lang: str | None = None) -> str | None:
         if lang and lang in self.names:
             return self.names[lang]

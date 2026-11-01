@@ -1,0 +1,191 @@
+name: build-packs
+
+# Builds country packs (elevation tiles + peak DBs) and publishes them to Cloudflare R2.
+# Setup: docs/ci-setup.md (secrets R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY; variables R2_ACCOUNT_ID, R2_BUCKET,
+# PEAKER_DATA_URL).
+# Without the secrets the packs are still built and attached to the run as an artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      countries:
+        description: "ISO codes, space separated (empty = pipeline/packs.txt)"
+        required: false
+        default: ""
+      resolutions:
+        description: "DEM resolutions: '90' or '90 30'"
+        required: false
+        default: "90"
+      publish:
+        description: "Upload to R2"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC: refresh peaks (OSM/Wikidata change weekly; tiles don't)
+
+concurrency:
+  group: build-packs # never two builds writing the same bucket
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PEAKER_CACHE: ${{ github.workspace }}/.peaker-cache
+  OUT: ${{ github.workspace }}/out
+  # Cloudflare R2 speaks the S3 API. Region must be "auto"; newer AWS CLIs need the checksum settings.
+  AWS_DEFAULT_REGION: auto
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pipeline and run unit tests
+        working-directory: pipeline
+        run: |
+          uv venv
+          uv pip install -e '.[dev]'
+          .venv/bin/python -m pytest -q -m "not network"
+
+      # Download cache: Copernicus source tiles, Wikidata per tile, GeoNames, extracted OSM peaks.
+      # A new cache is saved every run (also on failure, so a slow first build isn't lost);
+      # the newest one is restored.
+      - name: Restore download cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .peaker-cache
+          key: peaker-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: peaker-cache-v1-
+
+      - name: Expire stale cache entries
+        run: |
+          mkdir -p "$PEAKER_CACHE"
+          # Elevation never changes; peak sources do.
+          find "$PEAKER_CACHE/wikidata" -type f -mtime +30 -delete 2>/dev/null || true
+          find "$PEAKER_CACHE/geonames" -type f -mtime +7 -delete 2>/dev/null || true
+          find "$PEAKER_CACHE/osm-peaks" -type f -mtime +6 -delete 2>/dev/null || true
+          find "$PEAKER_CACHE/geofabrik" -type f -mtime +1 -delete 2>/dev/null || true
+          du -sh "$PEAKER_CACHE"/* 2>/dev/null || true
+
+      - name: Decide what to build
+        id: plan
+        env:
+          INPUT_COUNTRIES: ${{ github.event.inputs.countries }}
+          INPUT_RES: ${{ github.event.inputs.resolutions }}
+          INPUT_PUBLISH: ${{ github.event.inputs.publish }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          countries="$INPUT_COUNTRIES"
+          if [ -z "$countries" ]; then
+            countries=$(sed 's/#.*//' pipeline/packs.txt | tr -s '[:space:]' ' ')
+          fi
+          countries=$(echo "$countries" | tr '[:lower:]' '[:upper:]' | xargs)
+          if ! echo "$countries" | grep -Eq '^[A-Z]{2}( [A-Z]{2})*$'; then
+            echo "::error::countries must be ISO alpha-2 codes, got '$countries'"; exit 1
+          fi
+          res="${INPUT_RES:-90}"
+          if ! echo "$res" | grep -Eq '^(90|30)( (90|30))*$'; then
+            echo "::error::resolutions must be 90 and/or 30, got '$res'"; exit 1
+          fi
+          publish=false
+          if [ "${INPUT_PUBLISH:-true}" = "true" ]; then
+            if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_BUCKET" ]; then
+              publish=true
+            else
+              echo "::notice::R2 secrets/variables not set: building without publishing (see docs/ci-setup.md)"
+            fi
+          fi
+          echo "countries=$countries" >> "$GITHUB_OUTPUT"
+          echo "res=$res" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Building: $countries (res $res), publish=$publish"
+
+      # The catalog lists every published country, so start from what's already in the bucket.
+      - name: Fetch published catalog and manifests
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          mkdir -p "$OUT/v1/countries"
+          aws s3 sync "s3://$BUCKET/v1/countries/" "$OUT/v1/countries/" --endpoint-url "$ENDPOINT" --only-show-errors
+          aws s3 cp "s3://$BUCKET/v1/catalog.json" "$OUT/v1/catalog.json" --endpoint-url "$ENDPOINT" --only-show-errors \
+            || echo "no catalog yet (first publish)"
+
+      - name: Build packs
+        working-directory: pipeline
+        run: |
+          .venv/bin/peaker-pipeline pack ${{ steps.plan.outputs.countries }} \
+            --res ${{ steps.plan.outputs.res }} --out "$OUT" --drop-pbf
+
+      - name: Summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, json, os
+          files = sorted(glob.glob(os.path.join(os.environ["OUT"], "reports", "*.json")))
+          if not files:
+              print("No reports (build failed early)."); raise SystemExit
+          print("| pack | tiles | tiles MB | peaks | sources | QA flags | build s |")
+          print("|---|---|---|---|---|---|---|")
+          for f in files:
+              r = json.load(open(f))
+              src = ", ".join(f"{k}: {v}" for k, v in r["peaks_by_source"].items())
+              qa = ", ".join(f"{k}: {v}" for k, v in r["elevation_check"].get("qa_flags", {}).items())
+              print(f"| {r['code']} | {r['tiles']} | {r['tile_mb']} | {r['peaks']} | {src} | {qa} | {r['seconds']} |")
+          PY
+
+      - name: Upload build as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packs-${{ github.run_id }}
+          path: |
+            out/v1
+            out/reports
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Order matters: data files first, then manifests, then the catalog, so the app never sees
+      # a catalog or manifest that points at files that aren't uploaded yet.
+      - name: Publish to R2
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ vars.R2_BUCKET }}
+          PUBLIC_URL: ${{ vars.PEAKER_DATA_URL }}
+        run: |
+          s3() { aws s3 "$@" --endpoint-url "$ENDPOINT" --only-show-errors; }
+          immutable="public, max-age=31536000, immutable"
+          # Tiles are deterministic and immutable: skip any that already exist with the same size.
+          s3 sync "$OUT/v1/tiles/" "s3://$BUCKET/v1/tiles/" --size-only \
+            --cache-control "$immutable" --content-type application/octet-stream
+          s3 sync "$OUT/v1/peaks/" "s3://$BUCKET/v1/peaks/" --size-only \
+            --cache-control "$immutable" --content-type application/octet-stream
+          s3 sync "$OUT/v1/countries/" "s3://$BUCKET/v1/countries/" \
+            --cache-control "public, max-age=300" --content-type application/json
+          s3 cp "$OUT/v1/catalog.json" "s3://$BUCKET/v1/catalog.json" \
+            --cache-control "public, max-age=300" --content-type application/json
+          echo "Published to \`s3://$BUCKET/v1/\`. Catalog: ${PUBLIC_URL:-<public bucket URL>}/v1/catalog.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save download cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .peaker-cache
+          key: peaker-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}

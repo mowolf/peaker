@@ -18,4 +18,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv venv && uv pip install -e '.[dev]'
-      - run: uv run pytest -q -m "not network"
+      - run: .venv/bin/python -m pytest -q -m "not network"

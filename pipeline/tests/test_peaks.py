@@ -182,3 +182,37 @@ def test_importance_penalises_conflicts():
     a = Peak(46, 7, name="A", prominence=500)
     b = Peak(46, 7, name="B", prominence=500, qa=["ele_conflict"])
     assert importance(b) < importance(a) / 4
+
+
+def test_peak_dict_roundtrip():
+    p = Peak(45.9, 7.6, name="X", names={"de": "Y"}, ele=4000, ele_alts=[("geonames", 3990.0)], qa=["alt_source"],
+             osm_id=1, sources=["osm", "geonames"])
+    import json
+
+    assert Peak.from_dict(json.loads(json.dumps(p.to_dict()))) == p
+
+
+def test_osm_peaks_cached_and_pbf_dropped(tmp_path, monkeypatch):
+    import json
+
+    from peaker_pipeline.peaks import osm
+
+    xml = ('<?xml version="1.0"?><osm version="0.6"><node id="7" lat="46" lon="7" version="1">'
+           '<tag k="natural" v="peak"/><tag k="name" v="Test"/></node></osm>')
+    url = "https://download.geofabrik.de/europe/testland-latest.osm"
+    monkeypatch.setattr(osm, "geofabrik_pbf_urls", lambda cc, cache: [url])
+    calls = []
+
+    def fake_download(u, dest, **kw):
+        calls.append(u)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(xml)
+        return dest
+
+    monkeypatch.setattr("peaker_pipeline.http.download", fake_download)
+    first = osm.osm_peaks_for_country("TL", tmp_path, keep_pbf=False)
+    assert [p.osm_id for p in first] == [7]
+    assert not (tmp_path / "geofabrik" / "europe" / "testland-latest.osm").exists()
+    cached = tmp_path / "osm-peaks" / "europe_testland-latest.osm.json"
+    assert json.loads(cached.read_text())[0]["name"] == "Test"
+    assert osm.osm_peaks_for_country("TL", tmp_path) == first and len(calls) == 1  # second call: from cache

@@ -6,7 +6,7 @@ apart from ``catalog.json`` and the country manifests):
     v1/catalog.json                 list of countries, sizes, land-tile bitset
     v1/countries/CH.json            tiles (with size + sha256) and peak DB of one pack
     v1/tiles/90/N45E007.pkt         one file per tile, shared by all packs
-    v1/peaks/CH.sqlite.deflate      raw-deflate compressed SQLite (docs/pack-format.md)
+    v1/peaks/CH.<built>.sqlite.deflate   raw-deflate compressed SQLite, new name per build (docs/pack-format.md)
     reports/CH.json                 QA report (not published)
 """
 
@@ -59,6 +59,7 @@ class PackOptions:
     use_wikidata: bool = True
     use_geonames: bool = True
     include_hills: bool = False
+    keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
     codec: str = DEFAULT_CODEC
 
 
@@ -105,7 +106,8 @@ def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: l
             osm_peaks += osm.read_osm_peaks(p, include_hills=opts.include_hills)
     elif opts.use_osm:
         for c in involved:
-            osm_peaks += osm.osm_peaks_for_country(c.code, cache_dir, include_hills=opts.include_hills)
+            osm_peaks += osm.osm_peaks_for_country(c.code, cache_dir, include_hills=opts.include_hills,
+                                                   keep_pbf=opts.keep_pbf)
 
     # Wikidata is queried per tile (no country filter), cached per tile and shared between packs.
     wd_peaks = wikidata.fetch_area_peaks(area_tiles, cache_dir) if opts.use_wikidata else []
@@ -162,11 +164,15 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
     raw = db_path.read_bytes()
     c = zlib.compressobj(9, zlib.DEFLATED, -15)
     packed = c.compress(raw) + c.flush()
-    peaks_path = out_v / "peaks" / f"{code}.sqlite.deflate"
+    # A new file name per build keeps every published file immutable: an app holding an
+    # older manifest still finds the matching DB, and CDNs can cache everything forever.
+    stamp = manifest["built_at"].replace("-", "").replace(":", "").replace("T", "").rstrip("Z")[:12]
+    peaks_name = f"{code}.{stamp}.sqlite.deflate"
+    peaks_path = out_v / "peaks" / peaks_name
     peaks_path.parent.mkdir(parents=True, exist_ok=True)
     peaks_path.write_bytes(packed)
     manifest["peaks"] = {
-        "path": f"peaks/{code}.sqlite.deflate",
+        "path": f"peaks/{peaks_name}",
         "bytes": len(packed),
         "uncompressed_bytes": len(raw),
         "sha256": hashlib.sha256(packed).hexdigest(),

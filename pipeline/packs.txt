@@ -1,0 +1,4 @@
+# Countries the scheduled build (.github/workflows/build-packs.yml) rebuilds every week.
+# ISO 3166-1 alpha-2 codes, whitespace separated; '#' starts a comment.
+# Add countries one at a time: the first build of a country is slow (Wikidata, Geofabrik downloads).
+CH
