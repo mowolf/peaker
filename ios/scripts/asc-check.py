@@ -35,6 +35,16 @@ def get(path):
             return e.code, {"raw": body[:300].decode(errors="replace")}
 
 
+def post(path, body):
+    req = urllib.request.Request("https://api.appstoreconnect.apple.com" + path, data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, {"raw": e.read()[:300].decode(errors="replace")}
+
+
 def fail(msg):
     print(f"::error::{msg}")
     sys.exit(1)
@@ -57,9 +67,14 @@ for b, n in sorted(apps.items()):
 status, ids = get(f"/v1/bundleIds?filter[identifier]={bundle}&limit=5")
 registered = status == 200 and any(i["attributes"]["identifier"] == bundle for i in ids.get("data", []))
 print(f"Bundle ID {bundle} registered in Certificates, Identifiers & Profiles: {'yes' if registered else 'no'}")
+if not registered:
+    # Same thing Xcode's automatic signing would do; makes the ID selectable in the "New App" form.
+    status, resp = post("/v1/bundleIds", {"data": {"type": "bundleIds", "attributes": {
+        "identifier": bundle, "name": "Peaker", "platform": "IOS"}}})
+    print(f"Registering {bundle}: HTTP {status}" + ("" if status == 201 else f" {json.dumps(resp)[:300]}"))
 
 if bundle not in apps:
-    hint = "" if registered else " Register the bundle ID first (Identifiers → +), then create the app."
-    fail(f"No app record for {bundle} in App Store Connect. Create it under Apps → + → New App with exactly "
-         f"this bundle ID, or set the repository variable IOS_BUNDLE_ID to one of the bundle IDs listed above.{hint}")
+    fail(f"No app record for {bundle} in App Store Connect. Create it once by hand (Apple's API can't): "
+         f"App Store Connect → Apps → + → New App → iOS, name 'Peaker', bundle ID {bundle}, any SKU. "
+         f"Or set the repository variable IOS_BUNDLE_ID to one of the bundle IDs listed above.")
 print(f"App record found: {apps[bundle]}")
