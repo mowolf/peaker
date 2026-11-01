@@ -157,55 +157,60 @@ final class PackStore {
 
     // MARK: - Install / remove
 
+    // `install` is split into small functions on purpose: one long async function containing the
+    // task group made the Swift 6.2 compiler hang (SIL ClosureLifetimeFixup pass).
     func install(_ entry: Catalog.CountryEntry) async {
         guard let baseURL else { return }
         guard downloads[entry.code] == nil || downloads[entry.code]?.error != nil else { return }
         downloads[entry.code] = DownloadState()
         do {
-            let v1 = baseURL.appendingPathComponent("v1")
-            let manifest = try PackManifest.decode(try await Self.fetch(v1.appendingPathComponent(entry.manifest)))
-            let tiles = manifest.tiles["90"] ?? []
-            let missing = tiles.filter { !FileManager.default.fileExists(atPath: tilesDir.appendingPathComponent("\($0.name).pkt").path) }
-            downloads[entry.code]?.bytesTotal = missing.reduce(manifest.peaks.bytes) { $0 + $1.bytes }
-
-            // Tiles, 4 at a time.
-            let tilesDir = tilesDir
-            try await withThrowingTaskGroup(of: Int.self) { group in
-                var pending = missing.makeIterator()
-                for _ in 0..<4 {
-                    guard let t = pending.next() else { break }
-                    group.addTask { try await Self.downloadTile(t, from: v1, to: tilesDir) }
-                }
-                while let bytes = try await group.next() {
-                    downloads[entry.code]?.bytesDone += bytes
-                    if let t = pending.next() {
-                        group.addTask { try await Self.downloadTile(t, from: v1, to: tilesDir) }
-                    }
-                }
-            }
-
-            // Peak DB: verify, inflate, store as <CC>.sqlite.
-            let packed = try await Self.fetch(v1.appendingPathComponent(manifest.peaks.path))
-            guard Self.sha256(packed) == manifest.peaks.sha256 else { throw PackError.checksumMismatch("Peak database") }
-            guard let sqlite = try? (packed as NSData).decompressed(using: .zlib) as Data else {
-                throw PackError.decompressionFailed
-            }
-            let peaksFile = "\(manifest.code).sqlite"
-            try sqlite.write(to: peaksDir.appendingPathComponent(peaksFile), options: .atomic)
-            downloads[entry.code]?.bytesDone += manifest.peaks.bytes
-
-            let pack = InstalledPack(code: manifest.code, name: manifest.name, builtAt: manifest.builtAt,
-                                     tiles: tiles.map(\.name), peaksFile: peaksFile,
-                                     bytes: tiles.reduce(sqlite.count) { $0 + $1.bytes },
-                                     peakCount: manifest.peaks.count, isBundled: false)
-            installed.removeAll { $0.code == pack.code }
-            installed.append(pack)
-            saveInstalled()
-            downloads[entry.code] = nil
-            version += 1
+            let pack = try await downloadPack(entry, v1: baseURL.appendingPathComponent("v1"))
+            finishInstall(pack)
         } catch {
             downloads[entry.code]?.error = error.localizedDescription
         }
+    }
+
+    private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL) async throws -> InstalledPack {
+        let manifestData = try await Self.fetch(v1.appendingPathComponent(entry.manifest))
+        let manifest = try PackManifest.decode(manifestData)
+        let tiles = manifest.tiles["90"] ?? []
+        let missing = missingTiles(tiles)
+        var total = manifest.peaks.bytes
+        for t in missing { total += t.bytes }
+        downloads[entry.code]?.bytesTotal = total
+
+        let code = entry.code
+        try await Self.downloadTiles(missing, from: v1, to: tilesDir) { [weak self] bytes in
+            await self?.addProgress(code, bytes: bytes)
+        }
+        let sqliteBytes = try await Self.downloadPeakDatabase(manifest.peaks, from: v1,
+                                                              to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
+        addProgress(code, bytes: manifest.peaks.bytes)
+
+        var bytes = sqliteBytes
+        for t in tiles { bytes += t.bytes }
+        return InstalledPack(code: manifest.code, name: manifest.name, builtAt: manifest.builtAt,
+                             tiles: tiles.map(\.name), peaksFile: "\(manifest.code).sqlite",
+                             bytes: bytes, peakCount: manifest.peaks.count, isBundled: false)
+    }
+
+    private func missingTiles(_ tiles: [PackManifest.TileFile]) -> [PackManifest.TileFile] {
+        tiles.filter { t in
+            !FileManager.default.fileExists(atPath: tilesDir.appendingPathComponent("\(t.name).pkt").path)
+        }
+    }
+
+    private func addProgress(_ code: String, bytes: Int) {
+        downloads[code]?.bytesDone += bytes
+    }
+
+    private func finishInstall(_ pack: InstalledPack) {
+        installed.removeAll { $0.code == pack.code }
+        installed.append(pack)
+        saveInstalled()
+        downloads[pack.code] = nil
+        version += 1
     }
 
     func remove(_ code: String) {
@@ -237,6 +242,37 @@ final class PackStore {
             throw PackError.badResponse(http.statusCode)
         }
         return data
+    }
+
+    /// Download tiles, 4 at a time, reporting each finished tile's size.
+    nonisolated private static func downloadTiles(_ tiles: [PackManifest.TileFile], from v1: URL, to dir: URL,
+                                                  progress: @escaping @Sendable (Int) async -> Void) async throws {
+        try await withThrowingTaskGroup(of: Int.self) { group in
+            var pending = tiles.makeIterator()
+            for _ in 0..<4 {
+                guard let t = pending.next() else { break }
+                group.addTask { try await downloadTile(t, from: v1, to: dir) }
+            }
+            while let bytes = try await group.next() {
+                await progress(bytes)
+                if let t = pending.next() {
+                    group.addTask { try await downloadTile(t, from: v1, to: dir) }
+                }
+            }
+        }
+    }
+
+    /// Download, verify and inflate the peak database. Returns the size of the SQLite file.
+    nonisolated private static func downloadPeakDatabase(_ file: PackManifest.PeaksFile, from v1: URL,
+                                                         to destination: URL) async throws -> Int {
+        let packed = try await fetch(v1.appendingPathComponent(file.path))
+        guard sha256(packed) == file.sha256 else { throw PackError.checksumMismatch("Peak database") }
+        guard let inflated = try? (packed as NSData).decompressed(using: .zlib) else {
+            throw PackError.decompressionFailed
+        }
+        let sqlite = inflated as Data
+        try sqlite.write(to: destination, options: .atomic)
+        return sqlite.count
     }
 
     nonisolated private static func downloadTile(_ t: PackManifest.TileFile, from v1: URL, to dir: URL) async throws -> Int {
