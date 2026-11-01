@@ -48,15 +48,7 @@ jobs:
 
       - name: Build app (simulator)
         timeout-minutes: 20
-        run: |
-          set -o pipefail
-          # Slow type checking shows up as warnings; an expression that takes > 20 s fails with its location
-          # instead of hanging the build.
-          xcodebuild build -project ios/Peaker.xcodeproj -scheme Peaker -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -warn-long-expression-type-checking=200 -Xfrontend -warn-long-function-bodies=300 -Xfrontend -solver-expression-time-threshold=20' \
-            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | xcbeautify --renderer github-actions
+        run: ios/scripts/ci-build.sh
 
       - name: Upload build log
         if: always()
