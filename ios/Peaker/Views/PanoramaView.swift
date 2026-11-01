@@ -193,8 +193,12 @@ struct PanoramaView: View {
                   let s = pose.project(azimuth: v.azimuth, altitude: v.altitude),
                   s.x > -20, s.x < screenWidth + 20, s.y > 80, s.y < screenHeight else { continue }
             let name = v.peak.displayName(language: language)
-            let detail = [v.peak.elevation.map { model.settings.elevation($0) }, model.settings.distance(v.distance)]
-                .compactMap { $0 }.joined(separator: " · ")
+            var detailParts: [String] = []
+            if let elevation = v.peak.elevation {
+                detailParts.append(model.settings.elevation(elevation))
+            }
+            detailParts.append(model.settings.distance(v.distance))
+            let detail: String = detailParts.joined(separator: " · ")
             // Rough text width (13 pt semibold + 11 pt detail) — good enough for collision checks.
             let nameWidth: Double = Double(name.count) * 7.4
             let detailWidth: Double = Double(detail.count) * 5.6

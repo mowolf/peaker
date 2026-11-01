@@ -74,10 +74,17 @@ struct PeakDetailView: View {
     }
 
     private var otherNames: [String] {
-        let shown = visible.peak.displayName(language: Locale.current.language.languageCode?.identifier)
-        var seen = Set([shown])
-        return ([visible.peak.name] + ["de", "fr", "it", "en"].compactMap { visible.peak.names[$0] })
-            .filter { seen.insert($0).inserted }
+        let shown: String = visible.peak.displayName(language: Locale.current.language.languageCode?.identifier)
+        var seen: Set<String> = [shown]
+        var candidates: [String] = [visible.peak.name]
+        for language in ["de", "fr", "it", "en"] {
+            if let n = visible.peak.names[language] { candidates.append(n) }
+        }
+        var result: [String] = []
+        for name in candidates where seen.insert(name).inserted {
+            result.append(name)
+        }
+        return result
     }
 
     private var wikipediaURL: URL? {

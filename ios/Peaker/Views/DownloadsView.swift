@@ -168,6 +168,12 @@ private struct CountryRow: View {
 
 /// Regional indicator emoji for an ISO 3166-1 alpha-2 code.
 func flag(_ code: String) -> String {
-    code.uppercased().unicodeScalars.compactMap { UnicodeScalar(127_397 + $0.value) }
-        .map { String($0) }.joined()
+    var result = ""
+    for scalar in code.uppercased().unicodeScalars {
+        let value: UInt32 = 127_397 + scalar.value
+        if let flagScalar = Unicode.Scalar(value) {
+            result.unicodeScalars.append(flagScalar)
+        }
+    }
+    return result
 }
