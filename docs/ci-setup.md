@@ -1,0 +1,66 @@
+# CI setup: secrets and variables
+
+Add these in GitHub: **Settings → Secrets and variables → Actions**. Secrets go under the *Secrets*
+tab, variables under the *Variables* tab.
+
+| name | kind | used by | what |
+|---|---|---|---|
+| `APP_STORE_CONNECT_KEY_ID` | secret | ios | Key ID of an App Store Connect API key, e.g. `2X9R4HXF34` |
+| `APP_STORE_CONNECT_ISSUER_ID` | secret | ios | Issuer ID (UUID shown above the keys list) |
+| `APP_STORE_CONNECT_PRIVATE_KEY` | secret | ios | Contents of the downloaded `AuthKey_<KEYID>.p8` (paste the text, or its base64) |
+| `APPLE_TEAM_ID` | secret | ios | 10-character Team ID (developer.apple.com → Membership) |
+| `IOS_BUNDLE_ID` | variable | ios | Optional. Default `com.moritzwolf.peaker` |
+| `R2_ACCESS_KEY_ID` | secret | build-packs | R2 API token: Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | secret | build-packs | R2 API token: Secret Access Key |
+| `R2_ACCOUNT_ID` | variable | build-packs | Cloudflare account ID (R2 overview page, right side) |
+| `R2_BUCKET` | variable | build-packs | Bucket name, e.g. `peaker-data` |
+| `PEAKER_DATA_URL` | variable | ios, build-packs | Public URL of the bucket, **without** `/v1` and without a trailing slash, e.g. `https://data.peaker.app` or `https://pub-xxxx.r2.dev` |
+
+Missing secrets don't break CI: the app is still built and tested, only the upload is skipped
+(with a warning). The same goes for publishing packs.
+
+## TestFlight (`.github/workflows/ios.yml`)
+
+One-time setup in Apple's portals:
+
+1. **App Store Connect API key**: [App Store Connect → Users and Access → Integrations → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api)
+   → *Team Keys* → **+**. Give it the **Admin** role. Admin is needed so Xcode can use Apple's
+   cloud-managed distribution certificate and create the provisioning profile. Download the `.p8`
+   (you can only download it once). The key ID and issuer ID are shown on the same page.
+2. **App record**: [App Store Connect → Apps → + → New App](https://appstoreconnect.apple.com/apps): platform iOS,
+   name "Peaker" (or any free name), bundle ID `com.moritzwolf.peaker` (or your `IOS_BUNDLE_ID`), SKU e.g. `peaker`.
+   If the bundle ID isn't in the list yet, register it first under
+   [Certificates, Identifiers & Profiles → Identifiers](https://developer.apple.com/account/resources/identifiers/list)
+   (explicit App ID, no capabilities needed).
+3. Add the four secrets above.
+
+Then every push to the default branch (`master`) that touches `ios/` uploads a build. You can also
+start one by hand: **Actions → ios → Run workflow** (the workflow file must be on the default branch).
+The build number is the workflow run number. Builds show up in TestFlight after Apple's processing
+(5–30 min). Add yourself as an internal tester in App Store Connect → TestFlight.
+
+How signing works: the archive is built unsigned. `xcodebuild -exportArchive` then signs it with automatic
+signing, authenticated by the API key (`-allowProvisioningUpdates`): Apple's cloud-managed distribution
+certificate and an App Store provisioning profile are created and used on the fly, and the build is
+uploaded. No certificates or profiles are stored in GitHub.
+
+If export fails with a signing error (e.g. the key lacks the Admin role, or the team has cloud-managed
+certificates disabled), the fallback is the classic setup: a distribution certificate `.p12` plus an App Store
+provisioning profile as secrets, imported into a temporary keychain. Ask and we'll switch the workflow.
+
+## Country packs on Cloudflare R2 (`.github/workflows/build-packs.yml`)
+
+1. Cloudflare dashboard → **R2** → *Create bucket* (e.g. `peaker-data`, location automatic).
+2. Make it public. Either bucket → *Settings* → *Public access* → **R2.dev subdomain: Allow** (quick, rate-limited),
+   or better **Custom domains → Connect domain** (e.g. `data.peaker.app`, gets Cloudflare caching).
+   The resulting URL is `PEAKER_DATA_URL`.
+3. R2 → **Manage R2 API tokens** → *Create API token*: permission **Object Read & Write**, limited to this
+   bucket. Copy the Access Key ID and Secret Access Key → `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`.
+4. Account ID: R2 overview page → `R2_ACCOUNT_ID`. Bucket name → `R2_BUCKET`.
+
+Run **Actions → build-packs → Run workflow** (countries e.g. `CH AT`). Without input it builds the
+list in `pipeline/packs.txt`, and it also runs every Monday. The first build of a country takes a while
+(Wikidata is queried tile by tile); later runs reuse the cache.
+
+After the first publish, check `https://<PEAKER_DATA_URL>/v1/catalog.json` in a browser. New TestFlight
+builds pick up the URL from the `PEAKER_DATA_URL` variable, and the Offline maps screen lists the countries.

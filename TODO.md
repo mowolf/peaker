@@ -90,28 +90,28 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       (Natural Earth states/provinces) or named mountain regions. The format already supports this.
 - [ ] **K-7** Summit burn-in: raise the DEM around each peak to its official height (the DEM cuts sharp summits
       100–150 m too low, e.g. Matterhorn).
-- [ ] **K-5** Small **bundled demo pack** (e.g. one Alps tile set + peaks) so the app works on first launch and in tests.
+- [x] **K-5** *(ios/Peaker/Resources/DemoPack: 4 tiles + 6,180 peaks)* Small **bundled demo pack** (e.g. one Alps tile set + peaks) so the app works on first launch and in tests.
 
 ## Milestone 4 — iOS app skeleton
 
-- [ ] **A-1** Xcode project + SPM packages:
+- [x] **A-1** Xcode project + SPM packages:
   - `GeoKit` — coordinates, geodesy, earth curvature/refraction math
   - `TerrainKit` — tile loading and caching, height sampling, horizon computation
   - `PeakStore` — SQLite access (e.g. GRDB), spatial queries
   - `PeakerApp` — SwiftUI UI
-- [ ] **A-2** CI: build + unit tests on GitHub Actions macOS runners; SwiftLint/SwiftFormat.
-- [ ] **A-3** App navigation: Viewer (main), Map/Location, Downloads, Settings/Attribution.
-- [ ] **A-4** Permissions with clear usage texts: location (when in use), camera, motion.
-- [ ] **A-5** Settings: units (m/ft), label density, max distance, eye height, language for peak names.
+- [x] **A-2** *(ios.yml: package tests + simulator build on macos-26, TestFlight upload; no SwiftLint yet)* CI: build + unit tests on GitHub Actions macOS runners; SwiftLint/SwiftFormat.
+- [x] **A-3** App navigation: Viewer (main), Map/Location, Downloads, Settings/Attribution.
+- [x] **A-4** Permissions with clear usage texts: location (when in use), camera, motion.
+- [x] **A-5** Settings: units (m/ft), label density, max distance, eye height, language for peak names.
 
 ## Milestone 5 — Terrain engine: ridge lines (V1 core)
 
-- [ ] **T-1** Tile reader: decode tiles, memory-map/cache them (LRU), bilinear height sampling across tile borders.
-- [ ] **T-2** Observer height: DEM height at the GPS position + eye height (GPS altitude is too inaccurate).
+- [x] **T-1** Tile reader: decode tiles, memory-map/cache them (LRU), bilinear height sampling across tile borders.
+- [x] **T-2** Observer height: DEM height at the GPS position + eye height (GPS altitude is too inaccurate).
       Optionally refine with `CMAltimeter` (barometer).
-- [ ] **T-3** Geometry: account for earth curvature and atmospheric refraction,
+- [x] **T-3** Geometry: account for earth curvature and atmospheric refraction,
       `drop = d² / (2R) · (1 − k)`, with k ≈ 0.13.
-- [ ] **T-4** **Horizon / ridge algorithm**. Start with a CPU radial sweep:
+- [x] **T-4** **Horizon / ridge algorithm**. Start with a CPU radial sweep:
   - cast rays every ~0.1° of azimuth, sampling more coarsely the further out you go (use the coarser levels from D-5)
   - track the running max elevation angle along each ray. Points above it are visible; the point where a visible
     stretch ends behind closer terrain is a **ridge point**
@@ -119,47 +119,47 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
   - use SIMD/Accelerate and run it on a background task. Target < 1 s on an iPhone 12 for 250 km.
 - [ ] **T-5** Alternative/spike: render the terrain mesh into a panoramic depth buffer with **Metal** and find edges
       in the depth buffer. Compare quality and speed with T-4.
-- [ ] **T-6** Peak visibility: a peak is visible if its elevation angle ≥ the horizon angle at its azimuth/distance
+- [x] **T-6** Peak visibility: a peak is visible if its elevation angle ≥ the horizon angle at its azimuth/distance
       (with a tolerance). Compute screen position, distance and bearing for each.
-- [ ] **T-7** Label layout: no overlaps, ranked by prominence/elevation/distance, leader lines to the summit.
-- [ ] **T-8** Recompute when the user moves more than ~50–100 m, and cache results.
+- [x] **T-7** Label layout: no overlaps, ranked by prominence/elevation/distance, leader lines to the summit.
+- [x] **T-8** Recompute when the user moves more than ~50–100 m, and cache results.
 - [ ] **T-9** Golden tests: compare computed skylines from known viewpoints against reference panoramas
       (e.g. the udeuschle.de panorama generator or your own photos).
 
 ## Milestone 6 — AR viewer: camera + sensors (V1)
 
-- [ ] **R-1** Camera preview (AVFoundation) with the ridge/label overlay drawn in SwiftUI `Canvas` or Metal.
-- [ ] **R-2** Device orientation from `CMMotionManager` deviceMotion with the `.xTrueNorthZVertical` reference frame
+- [x] **R-1** Camera preview (AVFoundation) with the ridge/label overlay drawn in SwiftUI `Canvas` or Metal.
+- [x] **R-2** Device orientation from `CMMotionManager` deviceMotion with the `.xTrueNorthZVertical` reference frame
       → camera azimuth, pitch, roll. Low-pass filter to remove jitter.
-- [ ] **R-3** Camera field of view from `AVCaptureDevice.activeFormat.videoFieldOfView` (+ zoom factor) → projection.
-- [ ] **R-4** **Compass calibration**: the user drags the overlay to line it up with the real horizon. Store the offset for
+- [x] **R-3** Camera field of view from `AVCaptureDevice.activeFormat.videoFieldOfView` (+ zoom factor) → projection.
+- [x] **R-4** **Compass calibration**: the user drags the overlay to line it up with the real horizon. Store the offset for
       the session. Show a hint when heading accuracy is poor.
-- [ ] **R-5** Handle portrait/landscape orientation.
+- [x] **R-5** *(portrait only for now)* Handle portrait/landscape orientation.
 - [ ] **R-6** Freeze/snapshot: capture a photo with the overlay and save it to Photos.
 
 ## Milestone 7 — Manual / touch mode (V1)
 
-- [ ] **M-1** Toggle between sensor and manual mode (works without camera, e.g. indoors or for planning).
-- [ ] **M-2** Drag horizontally to rotate the azimuth (with inertia), drag vertically to change pitch, pinch to zoom (FOV).
-- [ ] **M-3** Rendered background instead of the camera: sky gradient, ridge lines, optional shaded terrain.
-- [ ] **M-4** Compass ribbon with N/E/S/W and degree ticks. Tap a peak for details (name, height, distance, bearing).
+- [x] **M-1** Toggle between sensor and manual mode (works without camera, e.g. indoors or for planning).
+- [x] **M-2** Drag horizontally to rotate the azimuth (with inertia), drag vertically to change pitch, pinch to zoom (FOV).
+- [x] **M-3** Rendered background instead of the camera: sky gradient, ridge lines, optional shaded terrain.
+- [x] **M-4** Compass ribbon with N/E/S/W and degree ticks. Tap a peak for details (name, height, distance, bearing).
 - [ ] **M-5** Pick any viewpoint on a map ("virtual standpoint") instead of GPS.
 
 ## Milestone 8 — Offline downloads by country (V1)
 
-- [ ] **O-1** Fetch and cache `catalog.json`, and show a country list with sizes and search.
+- [x] **O-1** Fetch and cache `catalog.json`, and show a country list with sizes and search.
 - [ ] **O-2** Suggest the current country (reverse geocode the GPS position) and neighbouring countries for views across borders.
-- [ ] **O-3** Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
-- [ ] **O-4** Verify SHA-256, then move tiles into Application Support (`isExcludedFromBackup = true`).
-- [ ] **O-5** Shared tile store with reference counting, so deleting a country only removes tiles no other installed pack uses.
-- [ ] **O-6** Storage overview (used space per country) and delete.
+- [x] **O-3** *(foreground async downloads with progress; true background session still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
+- [x] **O-4** Verify SHA-256, then move tiles into Application Support (`isExcludedFromBackup = true`).
+- [x] **O-5** Shared tile store with reference counting, so deleting a country only removes tiles no other installed pack uses.
+- [x] **O-6** Storage overview (used space per country) and delete.
 - [ ] **O-7** Dataset updates: compare versions and download only changed files (mostly the peak DBs).
-- [ ] **O-8** Handle a missing pack gracefully: show "download Switzerland to see peaks here" instead of an empty screen.
+- [x] **O-8** Handle a missing pack gracefully: show "download Switzerland to see peaks here" instead of an empty screen.
 
 ## Milestone 9 — V1 polish & release
 
 - [ ] **V-1** Onboarding (permissions, first download).
-- [ ] **V-2** Attribution/licenses screen (required by Copernicus and OSM).
+- [x] **V-2** Attribution/licenses screen (required by Copernicus and OSM).
 - [ ] **V-3** Performance: battery use, thermals, memory with large packs.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
