@@ -5,8 +5,8 @@ import Observation
 /// Back camera preview session and its field of view.
 @Observable
 final class CameraService {
-    @ObservationIgnored let session = AVCaptureSession()
-    @ObservationIgnored private let queue = DispatchQueue(label: "peaker.camera")
+    let session = AVCaptureSession()
+    private let queue = DispatchQueue(label: "peaker.camera")
     @ObservationIgnored private var configured = false
     /// Field of view across the sensor's long side (degrees), i.e. the screen height in portrait.
     private(set) var fieldOfView: Double = 65

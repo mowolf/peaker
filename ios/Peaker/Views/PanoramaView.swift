@@ -194,8 +194,8 @@ struct PanoramaView: View {
         let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: 150,
                                        maxLabels: density.maxLabels)
         return placed.compactMap { p in
-            guard let (peak, name, detail) = byID[p.id] else { return nil }
-            return PlacedLabel(peak: peak, name: name, detail: detail, summit: CGPoint(x: p.summitX, y: p.summitY),
+            guard let entry = byID[p.id] else { return nil }
+            return PlacedLabel(peak: entry.0, name: entry.1, detail: entry.2, summit: CGPoint(x: p.summitX, y: p.summitY),
                                frame: CGRect(x: p.x, y: p.y + 2, width: p.width, height: p.height - 4))
         }
     }

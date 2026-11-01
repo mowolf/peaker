@@ -229,7 +229,7 @@ private struct ControlBar: View {
                             .font(.title3)
                             .frame(width: 52, height: 52)
                     }
-                    .glassEffect(model.isCalibrating ? .regular.tint(.orange).interactive() : .regular.interactive(),
+                    .glassEffect(model.isCalibrating ? Glass.regular.tint(.orange).interactive() : Glass.regular.interactive(),
                                  in: .circle)
                     .glassEffectID("calibrate", in: glass)
                 }

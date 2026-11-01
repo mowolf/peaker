@@ -171,18 +171,16 @@ final class PackStore {
             // Tiles, 4 at a time.
             let tilesDir = tilesDir
             try await withThrowingTaskGroup(of: Int.self) { group in
-                var queue = missing[...]
-                func addNext() {
-                    guard let t = queue.popFirst() else { return }
-                    group.addTask {
-                        try await Self.download(v1.appendingPathComponent("tiles/90/\(t.name).pkt"), sha256: t.sha256,
-                                                to: tilesDir.appendingPathComponent("\(t.name).pkt"))
-                    }
+                var pending = missing.makeIterator()
+                for _ in 0..<4 {
+                    guard let t = pending.next() else { break }
+                    group.addTask { try await Self.downloadTile(t, from: v1, to: tilesDir) }
                 }
-                for _ in 0..<4 { addNext() }
                 while let bytes = try await group.next() {
                     downloads[entry.code]?.bytesDone += bytes
-                    addNext()
+                    if let t = pending.next() {
+                        group.addTask { try await Self.downloadTile(t, from: v1, to: tilesDir) }
+                    }
                 }
             }
 
@@ -239,6 +237,11 @@ final class PackStore {
             throw PackError.badResponse(http.statusCode)
         }
         return data
+    }
+
+    nonisolated private static func downloadTile(_ t: PackManifest.TileFile, from v1: URL, to dir: URL) async throws -> Int {
+        try await download(v1.appendingPathComponent("tiles/90/\(t.name).pkt"), sha256: t.sha256,
+                           to: dir.appendingPathComponent("\(t.name).pkt"))
     }
 
     /// Download to a temporary file, verify the checksum, then move into place. Returns the byte count.
