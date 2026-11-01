@@ -40,7 +40,7 @@ struct DownloadsView: View {
                     Section {
                         ContentUnavailableView("Downloads aren't set up",
                                                systemImage: "icloud.slash",
-                                               description: Text("This build has no data server configured. The demo region around Zermatt is included."))
+                                               description: Text("This build has no data server configured. The regions marked \"Included\" work offline."))
                     }
                 } else if let error = packs.catalogError, packs.catalog == nil {
                     Section {
@@ -93,7 +93,7 @@ private struct InstalledRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(pack.isBundled ? "🏔️" : flag(pack.code))
+            Text(pack.isBundled && pack.code.count != 2 ? "🏔️" : flag(pack.code))
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pack.name)

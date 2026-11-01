@@ -35,6 +35,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--drop-pbf", action="store_true",
                    help="delete each Geofabrik extract after reading it (saves disk in CI)")
 
+    p = sub.add_parser("bundle", help="export a built pack for bundling in the iOS app")
+    p.add_argument("country", help="pack to export (must be built into --out first)")
+    p.add_argument("--out", type=Path, default=Path("out"), help="pipeline output directory")
+    p.add_argument("--dest", type=Path, required=True, help="e.g. ../ios/Peaker/Resources/BundledPacks/NP")
+    p.add_argument("--bbox", help="west,south,east,north: only tiles/peaks inside (e.g. a demo region)")
+    p.add_argument("--code", help="code of the bundled pack (default: the country code)")
+    p.add_argument("--name", help="display name (default: the country name)")
+
     p = sub.add_parser("bench-encoding", help="compare tile encodings (decision F-3)")
     p.add_argument("--res", choices=["90", "30"], default="90")
     p.add_argument("--tiles", nargs="*")
@@ -74,6 +82,13 @@ def main(argv: list[str] | None = None) -> None:
         for code in args.country:
             report = build_pack(code, args.out, args.cache, opts)
             print(json.dumps(report, indent=1, ensure_ascii=False))
+
+    elif args.cmd == "bundle":
+        from .bundle import export_bundle
+
+        bbox = tuple(float(v) for v in args.bbox.split(",")) if args.bbox else None
+        print(json.dumps(export_bundle(args.out, args.country, args.dest, bbox=bbox, new_code=args.code,
+                                       name=args.name)))
 
     elif args.cmd == "bench-encoding":
         from . import bench

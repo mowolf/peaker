@@ -24,14 +24,15 @@ final class AppSettings {
     var eyeHeight: Double { didSet { defaults.set(eyeHeight, forKey: "eyeHeight") } }
     var units: UnitSystem { didSet { defaults.set(units.rawValue, forKey: "units") } }
     var labelDensity: LabelDensity { didSet { defaults.set(labelDensity.rawValue, forKey: "labelDensity") } }
-    var useDemoViewpoint: Bool { didSet { defaults.set(useDemoViewpoint, forKey: "useDemoViewpoint") } }
+    /// ID of a fixed viewpoint (see `Viewpoint.all`); empty = use GPS.
+    var fixedViewpointID: String { didSet { defaults.set(fixedViewpointID, forKey: "fixedViewpointID") } }
 
     init() {
         maxDistanceKm = defaults.object(forKey: "maxDistanceKm") as? Double ?? 200
         eyeHeight = defaults.object(forKey: "eyeHeight") as? Double ?? 1.8
         units = UnitSystem(rawValue: defaults.string(forKey: "units") ?? "") ?? .metric
         labelDensity = LabelDensity(rawValue: defaults.string(forKey: "labelDensity") ?? "") ?? .normal
-        useDemoViewpoint = defaults.object(forKey: "useDemoViewpoint") as? Bool ?? false
+        fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
     }
 
     func elevation(_ metres: Double) -> String {

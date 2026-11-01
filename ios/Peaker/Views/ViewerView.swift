@@ -34,7 +34,7 @@ struct ViewerView: View {
             SettingsView()
         }
         .onChange(of: model.settings.maxDistanceKm) { Task { await model.recompute() } }
-        .onChange(of: model.settings.useDemoViewpoint) { Task { await model.recompute() } }
+        .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
     }
 
@@ -96,16 +96,19 @@ private struct ViewpointChip: View {
     var body: some View {
         Menu {
             Button {
-                model.settings.useDemoViewpoint = false
-                model.location.requestAndStart()
+                model.choose(nil)
             } label: {
                 Label("Use my location", systemImage: "location.fill")
             }
             .disabled(model.location.isDenied)
-            Button {
-                model.settings.useDemoViewpoint = true
-            } label: {
-                Label("Demo: \(DemoViewpoint.name)", systemImage: "mountain.2.fill")
+            Section("Viewpoints") {
+                ForEach(Viewpoint.all) { viewpoint in
+                    Button {
+                        model.choose(viewpoint)
+                    } label: {
+                        Label("\(viewpoint.name) · \(viewpoint.region)", systemImage: "mountain.2.fill")
+                    }
+                }
             }
         } label: {
             HStack(spacing: 8) {

@@ -34,8 +34,17 @@ struct SettingsView: View {
                     .labelsHidden()
                 }
 
-                Section("Viewpoint") {
-                    Toggle("Use demo viewpoint (\(DemoViewpoint.name))", isOn: $settings.useDemoViewpoint)
+                Section {
+                    Picker("Viewpoint", selection: $settings.fixedViewpointID) {
+                        Text("My location (GPS)").tag("")
+                        ForEach(Viewpoint.all) { v in
+                            Text("\(v.name) · \(v.region)").tag(v.id)
+                        }
+                    }
+                } header: {
+                    Text("Viewpoint")
+                } footer: {
+                    Text("Fixed viewpoints use the regions bundled with the app, so you can try Peaker anywhere.")
                 }
 
                 Section("About") {

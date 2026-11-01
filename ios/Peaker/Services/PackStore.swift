@@ -13,7 +13,9 @@ struct InstalledPack: Codable, Hashable, Identifiable {
     var bytes: Int
     var peakCount: Int
     var isBundled: Bool
-    var id: String { code }
+    /// Folder name under `BundledPacks/` for packs shipped with the app.
+    var bundleFolder: String?
+    var id: String { isBundled ? "bundled-\(code)" : code }
 }
 
 /// Everything the background horizon computation needs, captured on the main actor.
@@ -62,7 +64,8 @@ final class PackStore {
     private var peaksDir: URL { root.appendingPathComponent("peaks", isDirectory: true) }
     private var installedFile: URL { root.appendingPathComponent("installed.json") }
     private var catalogFile: URL { root.appendingPathComponent("catalog.json") }
-    private let demoDir = Bundle.main.url(forResource: "DemoPack", withExtension: nil)
+    /// Packs shipped inside the app: one folder per pack with manifest.json, tiles/90/*.pkt, peaks.sqlite.
+    private let bundledRoot = Bundle.main.url(forResource: "BundledPacks", withExtension: nil)
 
     init() {
         let raw = (Bundle.main.object(forInfoDictionaryKey: "PeakerDataURL") as? String)?
@@ -83,21 +86,32 @@ final class PackStore {
            let list = try? JSONDecoder().decode([InstalledPack].self, from: data) {
             installed = list.filter { !$0.isBundled }
         }
-        if let demo = loadDemoPack() {
-            installed.insert(demo, at: 0)
-        }
+        installed.insert(contentsOf: loadBundledPacks(), at: 0)
         if let data = try? Data(contentsOf: catalogFile) {
             catalog = try? Catalog.decode(data)
         }
     }
 
-    private func loadDemoPack() -> InstalledPack? {
-        guard let demoDir, let data = try? Data(contentsOf: demoDir.appendingPathComponent("manifest.json")),
-              let m = try? PackManifest.decode(data) else { return nil }
-        let tiles = m.tiles["90"] ?? []
-        return InstalledPack(code: m.code, name: m.name, builtAt: m.builtAt, tiles: tiles.map(\.name),
-                             peaksFile: m.peaks.path, bytes: tiles.reduce(m.peaks.bytes) { $0 + $1.bytes },
-                             peakCount: m.peaks.count, isBundled: true)
+    private func loadBundledPacks() -> [InstalledPack] {
+        guard let bundledRoot,
+              let folders = try? FileManager.default.contentsOfDirectory(atPath: bundledRoot.path) else { return [] }
+        var packs: [InstalledPack] = []
+        for folder in folders.sorted() {
+            let manifestURL = bundledRoot.appendingPathComponent(folder).appendingPathComponent("manifest.json")
+            guard let data = try? Data(contentsOf: manifestURL), let m = try? PackManifest.decode(data) else { continue }
+            let tiles = m.tiles["90"] ?? []
+            var bytes = m.peaks.bytes
+            for t in tiles { bytes += t.bytes }
+            packs.append(InstalledPack(code: m.code, name: m.name, builtAt: m.builtAt, tiles: tiles.map(\.name),
+                                       peaksFile: m.peaks.path, bytes: bytes, peakCount: m.peaks.count,
+                                       isBundled: true, bundleFolder: folder))
+        }
+        return packs
+    }
+
+    private func bundledURL(_ pack: InstalledPack, _ relativePath: String) -> URL? {
+        guard let bundledRoot, let folder = pack.bundleFolder else { return nil }
+        return bundledRoot.appendingPathComponent(folder).appendingPathComponent(relativePath)
     }
 
     // MARK: - Lookup
@@ -108,14 +122,14 @@ final class PackStore {
         for pack in installed {
             for name in pack.tiles {
                 guard let id = TileID(name: name) else { continue }
-                if pack.isBundled, let demoDir {
-                    files[id] = files[id] ?? demoDir.appendingPathComponent("tiles/90/\(name).pkt")
+                if pack.isBundled {
+                    if files[id] == nil, let url = bundledURL(pack, "tiles/90/\(name).pkt") { files[id] = url }
                 } else {
                     files[id] = tilesDir.appendingPathComponent("\(name).pkt")  // downloaded tiles win
                 }
             }
-            if pack.isBundled, let demoDir {
-                dbs.append(demoDir.appendingPathComponent(pack.peaksFile))
+            if pack.isBundled {
+                if let url = bundledURL(pack, pack.peaksFile) { dbs.append(url) }
             } else {
                 dbs.append(peaksDir.appendingPathComponent(pack.peaksFile))
             }
@@ -124,6 +138,9 @@ final class PackStore {
     }
 
     func isInstalled(_ code: String) -> Bool { installed.contains { $0.code == code } }
+
+    /// Downloaded (not bundled) copy of a country, if any.
+    func isDownloaded(_ code: String) -> Bool { installed.contains { $0.code == code && !$0.isBundled } }
 
     var downloadedBytes: Int { installed.filter { !$0.isBundled }.reduce(0) { $0 + $1.bytes } }
 
@@ -206,7 +223,7 @@ final class PackStore {
     }
 
     private func finishInstall(_ pack: InstalledPack) {
-        installed.removeAll { $0.code == pack.code }
+        installed.removeAll { $0.code == pack.code && !$0.isBundled }
         installed.append(pack)
         saveInstalled()
         downloads[pack.code] = nil
@@ -214,8 +231,8 @@ final class PackStore {
     }
 
     func remove(_ code: String) {
-        guard let pack = installed.first(where: { $0.code == code }), !pack.isBundled else { return }
-        installed.removeAll { $0.code == code }
+        guard let pack = installed.first(where: { $0.code == code && !$0.isBundled }) else { return }
+        installed.removeAll { $0.code == code && !$0.isBundled }
         let stillUsed = Set(installed.filter { !$0.isBundled }.flatMap(\.tiles))
         for name in pack.tiles where !stillUsed.contains(name) {
             try? FileManager.default.removeItem(at: tilesDir.appendingPathComponent("\(name).pkt"))

@@ -5,24 +5,14 @@
  "built_at": "2026-11-01T08:18:11Z",
  "buffer_km": 0,
  "bbox": [
-  7,
-  45,
-  9,
-  47
+  7.0,
+  45.0,
+  9.0,
+  47.0
  ],
  "tile_codec": "pred2d-deflate@1m",
  "tiles": {
   "90": [
-   {
-    "name": "N45E007",
-    "bytes": 1202815,
-    "sha256": "f8d04ed8a1aea43eab351646ecde84afd5a5572e5b626a3755fc0c4a9aa973f3"
-   },
-   {
-    "name": "N45E008",
-    "bytes": 929467,
-    "sha256": "39e39509c2d3af68b662ab25389d97cb34c58441697deac181e7533147926b88"
-   },
    {
     "name": "N46E007",
     "bytes": 1207555,
@@ -32,6 +22,16 @@
     "name": "N46E008",
     "bytes": 1245853,
     "sha256": "686cd8ceb5ce5b2b4b935286f6bc63889b0d9abd6a80ea6cf818763fe5ae76aa"
+   },
+   {
+    "name": "N45E007",
+    "bytes": 1202815,
+    "sha256": "f8d04ed8a1aea43eab351646ecde84afd5a5572e5b626a3755fc0c4a9aa973f3"
+   },
+   {
+    "name": "N45E008",
+    "bytes": 929467,
+    "sha256": "39e39509c2d3af68b662ab25389d97cb34c58441697deac181e7533147926b88"
    }
   ]
  },
