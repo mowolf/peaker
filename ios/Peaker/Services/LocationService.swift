@@ -14,7 +14,9 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
-        manager.distanceFilter = 25
+        // No distance filter: a more accurate fix at the same spot must still be delivered.
+        // AppModel decides when a new fix is worth recomputing (RecomputePolicy).
+        manager.distanceFilter = kCLDistanceFilterNone
         authorization = manager.authorizationStatus
     }
 
@@ -24,6 +26,12 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
+        manager.startUpdatingLocation()
+    }
+
+    /// Restart updates to get a fresh fix right away.
+    func refresh() {
+        manager.stopUpdatingLocation()
         manager.startUpdatingLocation()
     }
 

@@ -63,9 +63,12 @@ final class AppModel {
 
     private struct ComputeKey: Equatable {
         var viewpoint: GeoCoordinate
+        /// Horizontal accuracy of the GPS fix used (metres); nil for fixed viewpoints.
+        var accuracy: Double?
         var maxDistance: Double
         var packVersion: Int
     }
+    private let recomputePolicy = RecomputePolicy()
     private var computedFor: ComputeKey?
     private let tileLoader = TileLoader()
 
@@ -81,6 +84,33 @@ final class AppModel {
         if let v = fixedViewpoint { return v.name }
         guard let c = observer else { return "Locating…" }
         return String(format: "%.4f°, %.4f°", c.latitude, c.longitude)
+    }
+
+    /// Accuracy (metres) of the GPS position in use; nil for fixed viewpoints.
+    var positionAccuracy: Double? {
+        fixedViewpoint == nil ? location.location?.horizontalAccuracy : nil
+    }
+
+    /// GPS position is still rough (typical right after launch); the view updates once it improves.
+    var isPositionRough: Bool { (positionAccuracy ?? 0) > 50 }
+
+    /// Second line of the location chip.
+    var viewpointDetail: String? {
+        let height = observerGround.map { settings.elevation($0) }
+        if let v = fixedViewpoint {
+            let parts: [String?] = [v.region, height]
+            return parts.compactMap { $0 }.joined(separator: " · ")
+        }
+        guard let accuracy = positionAccuracy else { return height }
+        let precision = "±" + settings.elevation(accuracy)
+        let parts: [String?] = [height, precision]
+        return parts.compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// Get a fresh GPS fix and recompute from it, even if the position barely changed.
+    func updatePositionNow() {
+        location.refresh()
+        Task { await recompute(force: true) }
     }
 
     func choose(_ viewpoint: Viewpoint?) {
@@ -155,13 +185,16 @@ final class AppModel {
     /// Recompute when the viewpoint moved > 75 m, the view distance changed, or packs changed.
     func recompute(force: Bool = false) async {
         let target = currentViewpoint
+        let accuracy = positionAccuracy
         let maxDistance = settings.maxDistanceKm * 1000
         let packVersion = packs.version
         if !force, let last = computedFor, last.maxDistance == maxDistance, last.packVersion == packVersion,
-           Geo.distance(last.viewpoint, target) < 75 {
+           !recomputePolicy.shouldRecompute(from: last.viewpoint, oldAccuracy: last.accuracy,
+                                            to: target, newAccuracy: accuracy) {
             return
         }
-        computedFor = ComputeKey(viewpoint: target, maxDistance: maxDistance, packVersion: packVersion)
+        computedFor = ComputeKey(viewpoint: target, accuracy: accuracy, maxDistance: maxDistance,
+                                 packVersion: packVersion)
         isComputing = true
         defer { isComputing = false }
 

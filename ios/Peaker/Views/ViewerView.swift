@@ -95,12 +95,20 @@ private struct ViewpointChip: View {
 
     var body: some View {
         Menu {
-            Button {
-                model.choose(nil)
-            } label: {
-                Label("Use my location", systemImage: "location.fill")
+            if model.fixedViewpoint == nil {
+                Button {
+                    model.updatePositionNow()
+                } label: {
+                    Label("Update position now", systemImage: "arrow.clockwise")
+                }
+            } else {
+                Button {
+                    model.choose(nil)
+                } label: {
+                    Label("Use my location", systemImage: "location.fill")
+                }
+                .disabled(model.location.isDenied)
             }
-            .disabled(model.location.isDenied)
             Section("Viewpoints") {
                 ForEach(Viewpoint.all) { viewpoint in
                     Button {
@@ -117,10 +125,15 @@ private struct ViewpointChip: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(model.viewpointName)
                         .font(.subheadline.weight(.semibold))
-                    if let ground = model.observerGround {
-                        Text(model.settings.elevation(ground))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if let detail = model.viewpointDetail {
+                        HStack(spacing: 4) {
+                            Text(detail)
+                            if model.isPositionRough {
+                                Text("· improving…")
+                            }
+                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(model.isPositionRough ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     }
                 }
                 Image(systemName: "chevron.down")
