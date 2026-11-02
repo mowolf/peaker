@@ -110,3 +110,15 @@ let observer = GeoCoordinate(latitude: 45.3, longitude: 7.5)
     let v = try! #require(result.visiblePeaks([peak]).first)
     #expect(abs(v.altitude - result.skylineAltitude(azimuth: v.azimuth)) < 0.05)
 }
+
+@Test func sameNamedPeaksNearbyAreMerged() {
+    func v(_ id: String, _ name: String, _ lat: Double, _ importance: Double) -> VisiblePeak {
+        VisiblePeak(peak: PeakInfo(id: id, name: name, coordinate: GeoCoordinate(latitude: lat, longitude: 83.82),
+                                   elevation: 8091, importance: importance), azimuth: 0, altitude: 1, distance: 1000)
+    }
+    let out = HorizonResult.removingNameDuplicates([v("osm", "Annapurna I", 28.596, 0.9),
+                                                    v("wd", "Annapurna I", 28.605, 0.8),
+                                                    v("far", "Annapurna I", 28.9, 0.7),
+                                                    v("other", "Annapurna South", 28.598, 0.6)])
+    #expect(Set(out.map(\.id)) == ["osm", "far", "other"])
+}

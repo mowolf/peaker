@@ -157,12 +157,30 @@ public struct HorizonResult: Sendable {
     }
 
     public func visiblePeaks(_ peaks: [PeakInfo], tolerance: Double = 25) -> [VisiblePeak] {
-        peaks.compactMap { p in
+        let visible = peaks.compactMap { p -> VisiblePeak? in
             guard let h = p.elevation, let g = visibility(of: p.coordinate, height: h, tolerance: tolerance) else {
                 return nil
             }
             return VisiblePeak(peak: p, azimuth: g.azimuth, altitude: g.altitude, distance: g.distance)
         }
+        return Self.removingNameDuplicates(visible)
+    }
+
+    /// Sources sometimes describe the same mountain twice with positions too far apart to merge (Annapurna I
+    /// from OSM and Wikidata ~1 km apart). Keep the more important of two same-named peaks within `radius`.
+    static func removingNameDuplicates(_ peaks: [VisiblePeak], radius: Double = 3000) -> [VisiblePeak] {
+        var kept: [VisiblePeak] = []
+        var byName: [String: [Int]] = [:]
+        for v in peaks.sorted(by: { $0.peak.importance > $1.peak.importance }) {
+            let key = v.peak.name.lowercased()
+            let duplicate = (byName[key] ?? []).contains { i in
+                Geo.distance(kept[i].peak.coordinate, v.peak.coordinate) < radius
+            }
+            if duplicate { continue }
+            byName[key, default: []].append(kept.count)
+            kept.append(v)
+        }
+        return kept
     }
 }
 

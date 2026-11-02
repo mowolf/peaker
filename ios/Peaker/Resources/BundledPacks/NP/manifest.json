@@ -2,7 +2,7 @@
  "format_version": 1,
  "code": "NP",
  "name": "Nepal",
- "built_at": "2026-11-01T15:30:20Z",
+ "built_at": "2026-11-02T01:16:30Z",
  "buffer_km": 50,
  "bbox": [
   80.0303,
@@ -222,10 +222,10 @@
  },
  "peaks": {
   "path": "peaks.sqlite",
-  "bytes": 880640,
-  "uncompressed_bytes": 880640,
-  "sha256": "16c8f71c5a4948a181f065108d048ca469d7b18772093a40314cee325699556c",
-  "count": 2740,
+  "bytes": 937984,
+  "uncompressed_bytes": 937984,
+  "sha256": "8854be4a459cfc3aa07b10fbd9ea1d842927d80c1a78488e4c27b939a141c2f3",
+  "count": 2713,
   "schema_version": 1
  },
  "neighbours": []
