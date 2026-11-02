@@ -1,4 +1,5 @@
 import CoreLocation
+import UIKit
 import Foundation
 import Observation
 import PeakerKit
@@ -33,6 +34,36 @@ final class AppModel {
     let motion = MotionService()
     let camera = CameraService()
 
+    /// Current interface orientation (portrait, or landscape for the wide panorama view).
+    private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
+
+    /// Read the orientation from the window scene (called when the view's size changes).
+    func updateInterfaceOrientation() {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let orientation = scene?.effectiveGeometry.interfaceOrientation ?? .portrait
+        if orientation != .unknown { interfaceOrientation = orientation }
+    }
+
+    /// The screen's top edge in device coordinates, for turning the device attitude into the view.
+    private var screenUp: Vec3 {
+        switch interfaceOrientation {
+        case .landscapeRight: Vec3(1, 0, 0)  // home side right: the device's +x points up
+        case .landscapeLeft: Vec3(-1, 0, 0)
+        case .portraitUpsideDown: Vec3(0, -1, 0)
+        default: Vec3(0, 1, 0)
+        }
+    }
+
+    /// Rotation for the camera preview so the image is upright in the current orientation.
+    var cameraRotationAngle: CGFloat {
+        switch interfaceOrientation {
+        case .landscapeRight: 0
+        case .landscapeLeft: 180
+        case .portraitUpsideDown: 270
+        default: 90
+        }
+    }
+
     /// Direction follows the device (gyro + compass). Off = the user drags the view.
     private(set) var isFollowingDevice = false
     /// Live camera behind the lines (only while following the device).
@@ -49,7 +80,8 @@ final class AppModel {
     // Manual view direction.
     var touchYaw: Double = 255
     var touchPitch: Double = 3
-    /// Zoom, shared by the drawn and the camera view: field of view across the screen height (degrees).
+    /// Zoom, shared by the drawn and the camera view: field of view across the screen's long side (degrees).
+    /// In portrait that's the height, in landscape the width, so rotating keeps the same scale.
     /// Starts at the camera's native angle so both views show the same framing; pinch changes it.
     /// While the camera is shown it is limited to what the lens can do (no wider than its native angle).
     private(set) var fieldOfView: Double = 65
@@ -61,7 +93,12 @@ final class AppModel {
     var pitchOffset: Double = 0
     var isAlignedByHand: Bool { headingOffset != 0 || pitchOffset != 0 }
 
+    /// Today's sun path with rise/set over the terrain; refreshed with the horizon and at midnight.
+    private(set) var sunDay: Sun.Day?
+    private var sunDayStart: Date?
+
     var selectedPeak: VisiblePeak?
+    var showDownloads = false
 
     private struct ComputeKey: Equatable {
         var viewpoint: GeoCoordinate
@@ -213,17 +250,17 @@ final class AppModel {
         if isFollowingDevice, let pose = currentDevicePose(size: size) {
             return pose
         }
-        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: size.height)
+        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: max(size.width, size.height))
         return CameraPose(yaw: touchYaw, pitch: touchPitch, focalLength: focal,
                           centerX: size.width / 2, centerY: size.height / 2)
     }
 
     private func currentDevicePose(size: CGSize) -> CameraPose? {
         guard let q = motion.attitude else { return nil }
-        // Same projection for both views. The camera preview is aspect-filled in portrait, so its long side
-        // (the lens angle, narrowed by the zoom factor set in setFieldOfView) spans the screen height.
-        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: size.height)
-        return CameraPose(deviceAttitude: q, focalLength: focal, centerX: size.width / 2, centerY: size.height / 2)
+        // Same projection for both views. The aspect-filled camera preview puts the sensor's long side (the lens
+        // angle, narrowed by the zoom factor set in setFieldOfView) along the screen's long side.
+        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: max(size.width, size.height))
+        return CameraPose(deviceAttitude: q, screenUp: screenUp, focalLength: focal, centerX: size.width / 2, centerY: size.height / 2)
             .rotatedYaw(by: headingOffset)
             .pitched(by: pitchOffset)
     }
@@ -259,8 +296,10 @@ final class AppModel {
             var horizonSettings = HorizonSettings()
             horizonSettings.maxDistance = maxDistance
             let ids = TileID.covering(center: target, radius: maxDistance)
-            let tiles = await loader.tiles(ids, files: snapshot.tileFiles, peakDatabases: snapshot.peakDatabases,
-                                           version: packVersion)
+            // High-detail (30 m) terrain where it matters: within ~35 km of the viewer.
+            let near = Set(TileID.covering(center: target, radius: 35_000))
+            let tiles = await loader.tiles(ids, near: near, files: snapshot.tileFiles, files30: snapshot.tileFiles30,
+                                           peakDatabases: snapshot.peakDatabases, version: packVersion)
             let terrain = TerrainModel(covering: ids, tiles: tiles) { id in
                 snapshot.landTiles?.contains(id)
             }
@@ -279,12 +318,25 @@ final class AppModel {
             observerGround = output.ground
             horizon = output.horizon
             visiblePeaks = output.visible
+            refreshSun(force: true)
         } else {
             noDataHere = true
             observerGround = nil
             horizon = nil
             visiblePeaks = []
         }
+    }
+
+    /// Recompute the sun's day when the horizon changed (`force`) or a new day began.
+    func refreshSun(force: Bool = false) {
+        guard let horizon else { sunDay = nil; return }
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        let today = calendar.startOfDay(for: Date())
+        guard force || sunDayStart != today else { return }
+        sunDayStart = today
+        sunDay = Sun.day(containing: Date(), at: horizon.observer, timeZone: .current, horizon: horizon,
+                         observerHeight: horizon.observerHeight)
     }
 
     private struct ComputeOutput: Sendable {

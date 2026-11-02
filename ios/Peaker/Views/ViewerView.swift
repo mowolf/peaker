@@ -27,6 +27,19 @@ struct ViewerView: View {
             PeakDetailView(visible: peak)
                 .presentationDetents([.height(340), .large])
         }
+        .sheet(isPresented: $model.showDownloads) {
+            DownloadsView()
+        }
+        // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
+        .onAppear { model.updateInterfaceOrientation() }
+        // The sun moves: refresh its day after midnight (current position is computed every frame).
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                model.refreshSun()
+            }
+        }
         .onChange(of: model.settings.maxDistanceKm) { Task { await model.recompute() } }
         .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
@@ -38,7 +51,7 @@ struct ViewerView: View {
         ZStack {
             SkyBackground()
             if model.camera.isAuthorized {
-                CameraPreview(session: model.camera.session)
+                CameraPreview(session: model.camera.session, rotationAngle: model.cameraRotationAngle)
                     .opacity(model.showsCamera && model.camera.isRunning ? 1 : 0)
                     .animation(.easeOut(duration: 0.25), value: model.showsCamera && model.camera.isRunning)
             }
@@ -154,7 +167,7 @@ private struct StatusBanner: View {
     var body: some View {
         Group {
             if model.noDataHere {
-                banner(icon: "square.dashed", text: "No offline elevation data here yet. Try a viewpoint from the menu above.")
+                banner(icon: "arrow.down.circle", text: "No offline data here yet. Download this country with the ↓ button.")
             } else if let h = model.horizon, h.missingFraction > 0.25 {
                 banner(icon: "square.dashed", text: "Part of the view is outside the offline data.")
             } else if model.isFollowingDevice && model.motion.isCompassUncertain {
@@ -227,6 +240,16 @@ private struct ControlBar: View {
                 .glassEffectID("camera", in: glass)
 
                 Spacer(minLength: 0)
+
+                Button { model.showDownloads = true } label: {
+                    Label("Offline maps", systemImage: "arrow.down.circle")
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
+                        .frame(width: 52, height: 52)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .glassEffectID("downloads", in: glass)
 
                 CompassButton()
                     .glassEffectID("compass-button", in: glass)

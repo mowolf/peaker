@@ -60,6 +60,7 @@ class PackOptions:
     use_geonames: bool = True
     include_hills: bool = False
     keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
+    peaks_db: Path | None = None  # reuse the peaks of an existing peak DB instead of collecting them
     codec: str = DEFAULT_CODEC
 
 
@@ -160,9 +161,17 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
     # Peaks: the area is the land tiles of the base resolution.
     base = sources[opts.resolutions[0]]
     land = [t for t in tiles if base.exists(t)]
-    peaks, involved = collect_peaks(country, countries, land, cache_dir, opts)
-    add_dem_heights(peaks, base.grid)
-    compute_isolation(peaks)
+    if opts.peaks_db:
+        from .peaks.db import read_peak_db
+
+        area = prep(unary_union([box(*t.bounds) for t in land]))
+        peaks = [p for p in read_peak_db(opts.peaks_db) if area.contains(Point(p.lon, p.lat))]
+        involved = [code]
+        log.info("reusing %d peaks from %s", len(peaks), opts.peaks_db)
+    else:
+        peaks, involved = collect_peaks(country, countries, land, cache_dir, opts)
+        add_dem_heights(peaks, base.grid)
+        compute_isolation(peaks)
     db_path = out / "build" / f"{code}.sqlite"
     write_peak_db(db_path, peaks, {"country": code, "built_at": manifest["built_at"],
                                    "sources": ",".join(involved)})

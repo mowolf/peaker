@@ -135,7 +135,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [x] **R-3** Camera field of view from `AVCaptureDevice.activeFormat.videoFieldOfView` (+ zoom factor) → projection.
 - [x] **R-4** **Compass calibration**: the user drags the overlay to line it up with the real horizon. Store the offset for
       the session. Show a hint when heading accuracy is poor.
-- [x] **R-5** *(portrait only for now)* Handle portrait/landscape orientation.
+- [x] **R-5** *(portrait + landscape panorama)* Handle portrait/landscape orientation.
 - [ ] **R-6** Freeze/snapshot: capture a photo with the overlay and save it to Photos.
 
 ## Milestone 7 — Manual / touch mode (V1)
@@ -229,11 +229,11 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 ## Later ideas (V3+)
 
-- Sun/moon path overlay (sunrise/sunset behind specific peaks)
+- [x] Sun path overlay with real sunrise/sunset over the terrain *(done in V1)*; moon still open
 - Additional POIs: huts, passes, lakes, towns
 - Apple Watch / widget showing the current direction
 - Share a panorama as an image/link
-- Higher-resolution packs (lidar DEMs like swissALTI3D, Austrian/German state DEMs) for selected countries
+- [x] 30 m packs near the viewer *(done: Copernicus GLO-30)*; even higher-resolution packs (lidar DEMs like swissALTI3D, Austrian/German state DEMs) for selected countries
 - Android version (the data pipeline and pack format stay the same)
 
 ## Open questions

@@ -73,7 +73,7 @@ jobs:
       ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.moritzwolf.peaker' }}
-      DATA_URL: ${{ vars.PEAKER_DATA_URL }}
+      DATA_URL: ${{ vars.PEAKER_DATA_URL || 'https://raw.githubusercontent.com/mowolf/height-data/main' }}
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Check secrets

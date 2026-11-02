@@ -15,12 +15,16 @@ struct InstalledPack: Codable, Hashable, Identifiable {
     var isBundled: Bool
     /// Folder name under `BundledPacks/` for packs shipped with the app.
     var bundleFolder: String?
+    /// High-detail (30 m) tiles of the pack, if it has them. `tiles` are the 90 m ones.
+    var tiles30: [String]?
     var id: String { isBundled ? "bundled-\(code)" : code }
 }
 
 /// Everything the background horizon computation needs, captured on the main actor.
 struct PackSnapshot: Sendable {
     var tileFiles: [TileID: URL]
+    /// High-detail 30 m tiles; used for the terrain near the viewer.
+    var tileFiles30: [TileID: URL]
     var peakDatabases: [URL]
     var landTiles: LandTiles?
 }
@@ -60,7 +64,10 @@ final class PackStore {
     private(set) var version = 0
 
     private let root: URL
-    private var tilesDir: URL { root.appendingPathComponent("tiles/90", isDirectory: true) }
+    private var tilesDir: URL { tilesDir("90") }
+    private func tilesDir(_ resolution: String) -> URL {
+        root.appendingPathComponent("tiles/\(resolution)", isDirectory: true)
+    }
     private var peaksDir: URL { root.appendingPathComponent("peaks", isDirectory: true) }
     private var installedFile: URL { root.appendingPathComponent("installed.json") }
     private var catalogFile: URL { root.appendingPathComponent("catalog.json") }
@@ -74,7 +81,8 @@ final class PackStore {
 
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         root = support.appendingPathComponent("Packs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tilesDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: tilesDir("90"), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: tilesDir("30"), withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: peaksDir, withIntermediateDirectories: true)
         // Re-downloadable data: keep it out of iCloud backups.
         var values = URLResourceValues()
@@ -118,6 +126,7 @@ final class PackStore {
 
     func snapshot() -> PackSnapshot {
         var files: [TileID: URL] = [:]
+        var files30: [TileID: URL] = [:]
         var dbs: [URL] = []
         for pack in installed {
             for name in pack.tiles {
@@ -128,13 +137,16 @@ final class PackStore {
                     files[id] = tilesDir.appendingPathComponent("\(name).pkt")  // downloaded tiles win
                 }
             }
+            for name in pack.tiles30 ?? [] {
+                if let id = TileID(name: name) { files30[id] = tilesDir("30").appendingPathComponent("\(name).pkt") }
+            }
             if pack.isBundled {
                 if let url = bundledURL(pack, pack.peaksFile) { dbs.append(url) }
             } else {
                 dbs.append(peaksDir.appendingPathComponent(pack.peaksFile))
             }
         }
-        return PackSnapshot(tileFiles: files, peakDatabases: dbs, landTiles: catalog?.landTiles())
+        return PackSnapshot(tileFiles: files, tileFiles30: files30, peakDatabases: dbs, landTiles: catalog?.landTiles())
     }
 
     func isInstalled(_ code: String) -> Bool { installed.contains { $0.code == code } }
@@ -192,29 +204,36 @@ final class PackStore {
         let manifestData = try await Self.fetch(v1.appendingPathComponent(entry.manifest))
         let manifest = try PackManifest.decode(manifestData)
         let tiles = manifest.tiles["90"] ?? []
-        let missing = missingTiles(tiles)
+        let tiles30 = manifest.tiles["30"] ?? []
+        let missing = missingTiles(tiles, resolution: "90")
+        let missing30 = missingTiles(tiles30, resolution: "30")
         var total = manifest.peaks.bytes
-        for t in missing { total += t.bytes }
+        for t in missing + missing30 { total += t.bytes }
         downloads[entry.code]?.bytesTotal = total
 
         let code = entry.code
-        try await Self.downloadTiles(missing, from: v1, to: tilesDir) { [weak self] bytes in
-            await self?.addProgress(code, bytes: bytes)
+        // 90 m first: enough to show the view; then the high-detail 30 m tiles.
+        for (resolution, list) in [("90", missing), ("30", missing30)] where !list.isEmpty {
+            try await Self.downloadTiles(list, resolution: resolution, from: v1, to: tilesDir(resolution)) { [weak self] bytes in
+                await self?.addProgress(code, bytes: bytes)
+            }
         }
         let sqliteBytes = try await Self.downloadPeakDatabase(manifest.peaks, from: v1,
                                                               to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
         addProgress(code, bytes: manifest.peaks.bytes)
 
         var bytes = sqliteBytes
-        for t in tiles { bytes += t.bytes }
+        for t in tiles + tiles30 { bytes += t.bytes }
         return InstalledPack(code: manifest.code, name: manifest.name, builtAt: manifest.builtAt,
                              tiles: tiles.map(\.name), peaksFile: "\(manifest.code).sqlite",
-                             bytes: bytes, peakCount: manifest.peaks.count, isBundled: false)
+                             bytes: bytes, peakCount: manifest.peaks.count, isBundled: false,
+                             tiles30: tiles30.isEmpty ? nil : tiles30.map(\.name))
     }
 
-    private func missingTiles(_ tiles: [PackManifest.TileFile]) -> [PackManifest.TileFile] {
-        tiles.filter { t in
-            !FileManager.default.fileExists(atPath: tilesDir.appendingPathComponent("\(t.name).pkt").path)
+    private func missingTiles(_ tiles: [PackManifest.TileFile], resolution: String) -> [PackManifest.TileFile] {
+        let dir = tilesDir(resolution)
+        return tiles.filter { t in
+            !FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(t.name).pkt").path)
         }
     }
 
@@ -233,9 +252,13 @@ final class PackStore {
     func remove(_ code: String) {
         guard let pack = installed.first(where: { $0.code == code && !$0.isBundled }) else { return }
         installed.removeAll { $0.code == code && !$0.isBundled }
-        let stillUsed = Set(installed.filter { !$0.isBundled }.flatMap(\.tiles))
+        let others = installed.filter { !$0.isBundled }
+        let stillUsed = Set(others.flatMap(\.tiles)), stillUsed30 = Set(others.flatMap { $0.tiles30 ?? [] })
         for name in pack.tiles where !stillUsed.contains(name) {
-            try? FileManager.default.removeItem(at: tilesDir.appendingPathComponent("\(name).pkt"))
+            try? FileManager.default.removeItem(at: tilesDir("90").appendingPathComponent("\(name).pkt"))
+        }
+        for name in pack.tiles30 ?? [] where !stillUsed30.contains(name) {
+            try? FileManager.default.removeItem(at: tilesDir("30").appendingPathComponent("\(name).pkt"))
         }
         try? FileManager.default.removeItem(at: peaksDir.appendingPathComponent(pack.peaksFile))
         saveInstalled()
@@ -262,18 +285,19 @@ final class PackStore {
     }
 
     /// Download tiles, 4 at a time, reporting each finished tile's size.
-    nonisolated private static func downloadTiles(_ tiles: [PackManifest.TileFile], from v1: URL, to dir: URL,
+    nonisolated private static func downloadTiles(_ tiles: [PackManifest.TileFile], resolution: String,
+                                                  from v1: URL, to dir: URL,
                                                   progress: @escaping @Sendable (Int) async -> Void) async throws {
         try await withThrowingTaskGroup(of: Int.self) { group in
             var pending = tiles.makeIterator()
             for _ in 0..<4 {
                 guard let t = pending.next() else { break }
-                group.addTask { try await downloadTile(t, from: v1, to: dir) }
+                group.addTask { try await downloadTile(t, resolution: resolution, from: v1, to: dir) }
             }
             while let bytes = try await group.next() {
                 await progress(bytes)
                 if let t = pending.next() {
-                    group.addTask { try await downloadTile(t, from: v1, to: dir) }
+                    group.addTask { try await downloadTile(t, resolution: resolution, from: v1, to: dir) }
                 }
             }
         }
@@ -292,8 +316,9 @@ final class PackStore {
         return sqlite.count
     }
 
-    nonisolated private static func downloadTile(_ t: PackManifest.TileFile, from v1: URL, to dir: URL) async throws -> Int {
-        try await download(v1.appendingPathComponent("tiles/90/\(t.name).pkt"), sha256: t.sha256,
+    nonisolated private static func downloadTile(_ t: PackManifest.TileFile, resolution: String, from v1: URL,
+                                                 to dir: URL) async throws -> Int {
+        try await download(v1.appendingPathComponent("tiles/\(resolution)/\(t.name).pkt"), sha256: t.sha256,
                            to: dir.appendingPathComponent("\(t.name).pkt"))
     }
 

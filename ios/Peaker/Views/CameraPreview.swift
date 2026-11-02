@@ -1,21 +1,30 @@
 import AVFoundation
 import SwiftUI
 
-/// Aspect-filled live preview of the back camera (portrait).
+/// Aspect-filled live preview of the back camera, rotated for the interface orientation.
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    /// Preview rotation for the interface orientation (90 portrait, 0 / 180 landscape).
+    var rotationAngle: CGFloat = 90
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
-        if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
-        }
+        applyRotation(view)
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        applyRotation(uiView)
+    }
+
+    private func applyRotation(_ view: PreviewView) {
+        if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(rotationAngle),
+           connection.videoRotationAngle != rotationAngle {
+            connection.videoRotationAngle = rotationAngle
+        }
+    }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }

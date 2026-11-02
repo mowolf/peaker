@@ -14,8 +14,9 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
-    # Overridden in CI (repository variable PEAKER_DATA_URL); empty = downloads disabled, demo only.
-    PEAKER_DATA_URL: ""
+    # Country packs (catalog at <url>/v1/catalog.json). Public GitHub repo mowolf/height-data;
+    # CI can override it with the repository variable PEAKER_DATA_URL.
+    PEAKER_DATA_URL: "https://raw.githubusercontent.com/mowolf/height-data/main"
 
 packages:
   PeakerKit:
@@ -60,6 +61,8 @@ targets:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIRequiredDeviceCapabilities:
           - arm64
         ITSAppUsesNonExemptEncryption: false

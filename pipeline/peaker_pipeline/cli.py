@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--hills", action="store_true", help="also include natural=hill / GeoNames HLL")
     p.add_argument("--drop-pbf", action="store_true",
                    help="delete each Geofabrik extract after reading it (saves disk in CI)")
+    p.add_argument("--peaks-db", type=Path, help="reuse the peaks of an existing peak DB (rebuild tiles only)")
 
     p = sub.add_parser("bundle", help="export a built pack for bundling in the iOS app")
     p.add_argument("country", help="pack to export (must be built into --out first)")
@@ -42,6 +43,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--bbox", help="west,south,east,north: only tiles/peaks inside (e.g. a demo region)")
     p.add_argument("--code", help="code of the bundled pack (default: the country code)")
     p.add_argument("--name", help="display name (default: the country name)")
+
+    p = sub.add_parser("publish", help="copy built packs into a static-file checkout (e.g. height-data repo)")
+    p.add_argument("--out", type=Path, default=Path("out"), help="pipeline output directory")
+    p.add_argument("--repo", type=Path, required=True, help="checkout to publish into, e.g. ../../height-data")
 
     p = sub.add_parser("bench-encoding", help="compare tile encodings (decision F-3)")
     p.add_argument("--res", choices=["90", "30"], default="90")
@@ -78,6 +83,7 @@ def main(argv: list[str] | None = None) -> None:
             use_geonames=not args.no_geonames,
             include_hills=args.hills,
             keep_pbf=not args.drop_pbf,
+            peaks_db=args.peaks_db,
         )
         for code in args.country:
             report = build_pack(code, args.out, args.cache, opts)
@@ -89,6 +95,11 @@ def main(argv: list[str] | None = None) -> None:
         bbox = tuple(float(v) for v in args.bbox.split(",")) if args.bbox else None
         print(json.dumps(export_bundle(args.out, args.country, args.dest, bbox=bbox, new_code=args.code,
                                        name=args.name)))
+
+    elif args.cmd == "publish":
+        from .publish import publish
+
+        print(json.dumps(publish(args.out, args.repo)))
 
     elif args.cmd == "bench-encoding":
         from . import bench

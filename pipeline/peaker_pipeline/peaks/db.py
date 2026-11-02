@@ -84,3 +84,27 @@ def write_peak_db(path: Path | str, peaks: list[Peak], meta: dict[str, str]) -> 
     finally:
         con.close()
     tmp.replace(path)
+
+
+def read_peak_db(path: Path | str) -> list[Peak]:
+    """Load peaks from a peak DB written by write_peak_db (e.g. to rebuild a pack's tiles with the same peaks).
+
+    Search-only alternative names aren't stored in the DB, so they are lost; everything else round-trips.
+    """
+    con = sqlite3.connect(path)
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(peaks)")]
+        out: list[Peak] = []
+        for row in con.execute("SELECT * FROM peaks"):
+            r = dict(zip(cols, row))
+            out.append(Peak(
+                lat=r["lat"], lon=r["lon"], name=r["name"], names=json.loads(r["names"]) if r["names"] else {},
+                ele=r["ele"], ele_source=r["ele_source"], dem_ele=r["dem_ele"], prominence=r["prominence"],
+                isolation_km=r["isolation_km"], kind=r["kind"], osm_id=r["osm_id"], wikidata=r["wikidata"],
+                geonames_id=r["geonames_id"], wikipedia=r["wikipedia"],
+                sources=(r["sources"] or "").split(",") if r["sources"] else [],
+                qa=(r.get("qa") or "").split(",") if r.get("qa") else [],
+            ))
+        return out
+    finally:
+        con.close()

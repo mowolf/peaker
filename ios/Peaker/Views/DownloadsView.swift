@@ -83,7 +83,7 @@ struct DownloadsView: View {
 
     private var suggestion: Catalog.CountryEntry? {
         guard search.isEmpty, !model.isUsingDemoViewpoint, let c = model.observer else { return nil }
-        return model.packs.suggestedCountries(near: c).first { !model.packs.isInstalled($0.code) }
+        return model.packs.suggestedCountries(near: c).first { !model.packs.isDownloaded($0.code) }
     }
 }
 
@@ -119,6 +119,16 @@ private struct CountryRow: View {
     @Environment(AppModel.self) private var model
     let entry: Catalog.CountryEntry
 
+    /// 90 m + 30 m tiles (each catalog size includes the peak DB once; good enough as an estimate).
+    private var downloadSize: Int { (entry.bytes["90"] ?? 0) + (entry.bytes["30"] ?? 0) }
+
+    private var summary: String {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(downloadSize), countStyle: .file)
+        var parts: [String] = ["\(entry.peaks.formatted()) peaks", size]
+        if entry.tiles["30"] != nil { parts.append("high detail") }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         let packs = model.packs
         let state = packs.downloads[entry.code]
@@ -136,13 +146,13 @@ private struct CountryRow: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 } else {
-                    Text("\(entry.peaks.formatted()) peaks · \(ByteCountFormatter.string(fromByteCount: Int64(entry.bytes["90"] ?? 0), countStyle: .file))")
+                    Text(summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if packs.isInstalled(entry.code) {
+            if packs.isDownloaded(entry.code) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else if let state, state.error == nil {

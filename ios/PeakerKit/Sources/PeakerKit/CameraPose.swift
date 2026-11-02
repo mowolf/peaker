@@ -37,9 +37,11 @@ public struct CameraPose: Sendable, Hashable {
     }
 
     /// Device camera (sensor mode) from a Core Motion attitude quaternion in the `xTrueNorthZVertical` frame.
-    /// Portrait orientation: the back camera looks along the device's -z axis, the screen's top is +y.
-    public init(deviceAttitude q: Quaternion, focalLength: Double, centerX: Double, centerY: Double) {
-        self.init(forward: q.act(Vec3(0, 0, -1)), up: q.act(Vec3(0, 1, 0)),
+    /// The back camera looks along the device's -z axis. `screenUp` is the direction of the screen's top edge in
+    /// device coordinates: +y in portrait, +x in landscape-right (home side right), -x in landscape-left.
+    public init(deviceAttitude q: Quaternion, screenUp: Vec3 = Vec3(0, 1, 0), focalLength: Double,
+                centerX: Double, centerY: Double) {
+        self.init(forward: q.act(Vec3(0, 0, -1)), up: q.act(screenUp),
                   focalLength: focalLength, centerX: centerX, centerY: centerY)
     }
 

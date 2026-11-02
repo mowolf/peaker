@@ -1,6 +1,12 @@
 # Country packs: hosting layout and app contract (version 1)
 
-Built by `pipeline/` (`peaker-pipeline pack CH`). Everything is static files behind a CDN.
+Built by `pipeline/` (`peaker-pipeline pack NP --res 90 30`). Everything is static files. Currently hosted in the
+public GitHub repo [mowolf/height-data](https://github.com/mowolf/height-data)
+(`https://raw.githubusercontent.com/mowolf/height-data/main`, published with `peaker-pipeline publish --repo`);
+Cloudflare R2 via the `build-packs` workflow is the scalable alternative (docs/ci-setup.md).
+
+Packs contain 90 m tiles for the whole area and, optionally, 30 m tiles. The app uses 30 m for tiles within
+~35 km of the viewer (26 MB in memory each) and 90 m everywhere else.
 
 ```
 v1/catalog.json                 all countries + land-tile bitsets          (mutable, short cache)

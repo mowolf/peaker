@@ -20,6 +20,9 @@ struct PanoramaView: View {
             let labels = layoutLabels(pose: pose, size: size)
             Canvas(rendersAsynchronously: false) { context, size in
                 if let horizon = model.horizon {
+                    if let sunDay = model.sunDay {
+                        drawSun(&context, day: sunDay, horizon: horizon, pose: pose, size: size)
+                    }
                     if !cameraVisible {
                         drawTerrain(&context, horizon: horizon, pose: pose, size: size)
                     }
@@ -184,6 +187,91 @@ struct PanoramaView: View {
         }
     }
 
+    // MARK: - Sun
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("jmm")  // 24 h or 12 h as the user prefers
+        return f
+    }()
+
+    private static let hourFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("j")
+        return f
+    }()
+
+    /// Sun path (dashed, only where it's above the terrain), hour marks, the sun now, and where it rises and
+    /// sets behind the mountains with times.
+    private func drawSun(_ context: inout GraphicsContext, day: Sun.Day, horizon: HorizonResult, pose: CameraPose,
+                         size: CGSize) {
+        let sunColor = Color(red: 1.0, green: 0.78, blue: 0.25)
+        var path = Path()
+        var penDown = false
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        for sample in day.samples {
+            let p = sample.position
+            let aboveTerrain: Bool = p.altitude + Sun.semiDiameter > horizon.skylineAltitude(azimuth: p.azimuth)
+            guard aboveTerrain, let s = pose.project(azimuth: p.azimuth, altitude: p.altitude) else {
+                penDown = false
+                continue
+            }
+            let pt = CGPoint(x: s.x, y: s.y)
+            if penDown { path.addLine(to: pt) } else { path.move(to: pt) }
+            penDown = true
+            // Hour marks
+            let minute = calendar.component(.minute, from: sample.date)
+            if minute == 0 {
+                context.fill(Path(ellipseIn: CGRect(x: pt.x - 2.5, y: pt.y - 2.5, width: 5, height: 5)),
+                             with: .color(sunColor.opacity(0.9)))
+                let hour = Text(Self.hourFormatter.string(from: sample.date))
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(sunColor)
+                context.draw(hour, at: CGPoint(x: pt.x, y: pt.y - 10))
+            }
+        }
+        context.stroke(path, with: .color(sunColor.opacity(0.7)),
+                       style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [5, 4]))
+
+        // Sun now: a glowing disc, faded when it is behind the mountains or below the horizon.
+        let now = Sun.position(at: Date(), coordinate: horizon.observer)
+        if let s = pose.project(azimuth: now.azimuth, altitude: now.altitude) {
+            let visible: Bool = now.altitude + Sun.semiDiameter > horizon.skylineAltitude(azimuth: now.azimuth)
+            let discRadius = CGFloat(Swift.max(9, pose.focalLength * tan(Sun.semiDiameter * Double.pi / 180)))
+            let center = CGPoint(x: s.x, y: s.y)
+            let glow = Path(ellipseIn: CGRect(x: center.x - discRadius * 3, y: center.y - discRadius * 3,
+                                              width: discRadius * 6, height: discRadius * 6))
+            context.fill(glow, with: .radialGradient(Gradient(colors: [sunColor.opacity(visible ? 0.55 : 0.15), .clear]),
+                                                     center: center, startRadius: discRadius * 0.5,
+                                                     endRadius: discRadius * 3))
+            let disc = Path(ellipseIn: CGRect(x: center.x - discRadius, y: center.y - discRadius,
+                                              width: discRadius * 2, height: discRadius * 2))
+            if visible {
+                context.fill(disc, with: .color(Color(red: 1.0, green: 0.92, blue: 0.6)))
+            } else {
+                context.stroke(disc, with: .color(sunColor.opacity(0.6)), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+            }
+        }
+
+        // Where the sun really rises / sets over the terrain, with the time.
+        for event in day.terrainEvents {
+            guard let s = pose.project(azimuth: event.position.azimuth, altitude: event.position.altitude) else {
+                continue
+            }
+            let pt = CGPoint(x: s.x, y: s.y)
+            context.fill(Path(ellipseIn: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8)), with: .color(sunColor))
+            let icon = event.kind == .rise ? "sunrise.fill" : "sunset.fill"
+            let label = Text("\(Image(systemName: icon)) \(Self.timeFormatter.string(from: event.date))")
+                .font(.system(size: 12, weight: .bold)).foregroundStyle(.black)
+            let resolved = context.resolve(label)
+            let textSize = resolved.measure(in: CGSize(width: 200, height: 40))
+            let box = CGRect(x: pt.x - textSize.width / 2 - 7, y: pt.y - textSize.height - 16,
+                             width: textSize.width + 14, height: textSize.height + 6)
+            context.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(sunColor))
+            context.draw(resolved, at: CGPoint(x: box.midX, y: box.midY))
+        }
+    }
+
     // MARK: - Labels
 
     struct PlacedLabel {
@@ -198,7 +286,8 @@ struct PanoramaView: View {
         let density = model.settings.labelDensity
         // Zoom relative to the default framing (camera's native angle). Zoomed in, peaks spread out,
         // so show more and smaller peaks; zoomed out, only the most important ones.
-        let fieldOfView: Double = 2 * atan(Double(size.height) / 2 / pose.focalLength) * 180 / Double.pi
+        let longSide: Double = Double(Swift.max(size.width, size.height))
+        let fieldOfView: Double = 2 * atan(longSide / 2 / pose.focalLength) * 180 / Double.pi
         let zoom: Double = Swift.max(0.4, Swift.min(4.0, model.camera.fieldOfView / fieldOfView))
         let maxLabels: Int = Int((Double(density.maxLabels) * Swift.min(2.5, zoom)).rounded())
         let minImportance: Double = density.minImportance / zoom
@@ -229,7 +318,9 @@ struct PanoramaView: View {
             let priority: Double = v.peak.importance + 0.15 * closeness
             candidates.append(.init(id: v.id, x: s.x, y: s.y, width: width, priority: priority))
         }
-        let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: 150,
+        // Keep labels below the top bar (shorter in landscape).
+        let topInset: Double = size.width > size.height ? 100 : 150
+        let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: topInset,
                                        maxX: Double(size.width) - 4, maxLabels: maxLabels,
                                        previous: labelMemory.rows)
         labelMemory.rows = Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.row) })

@@ -226,3 +226,15 @@ def test_peak_db_uses_readable_name(tmp_path):
     name, names = con.execute("SELECT name, names FROM peaks").fetchone()
     assert name == "Manaslu" and '"local": "मनास्लु"' in names
     assert con.execute("SELECT count(*) FROM peaks_fts WHERE peaks_fts MATCH 'manaslu'").fetchone()[0] == 1
+
+
+def test_peak_db_roundtrip(tmp_path):
+    from peaker_pipeline.peaks.db import read_peak_db
+
+    db = tmp_path / "r.sqlite"
+    src = [Peak(45.97, 7.65, name="Matterhorn", names={"it": "Cervino"}, ele=4478, ele_source="osm", dem_ele=4330,
+                osm_id=1, wikidata="Q1374", sources=["osm", "wikidata"], qa=["alt_source"], prominence=1031)]
+    write_peak_db(db, src, {"country": "CH"})
+    (p,) = read_peak_db(db)
+    assert (p.id, p.name, p.names, p.ele, p.dem_ele, p.qa, p.sources, p.prominence) == \
+        ("wd:Q1374", "Matterhorn", {"it": "Cervino"}, 4478, 4330, ["alt_source"], ["osm", "wikidata"], 1031)
