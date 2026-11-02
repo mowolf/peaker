@@ -121,6 +121,11 @@ def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: l
             except Exception as e:  # small territories may have no dump
                 log.warning("geonames %s: %s", c.code, e)
 
+    # Extracts of neighbouring countries overlap at the border, so the same OSM node can appear twice.
+    unique: dict[int, Peak] = {}
+    for p in osm_peaks:
+        unique.setdefault(p.osm_id, p)
+    osm_peaks = list(unique.values())
     log.info("raw peaks: osm=%d wikidata=%d geonames=%d", len(osm_peaks), len(wd_peaks), len(gn_peaks))
     merged = merge_peaks(osm_peaks, wd_peaks, gn_peaks)
     inside = prep(area)

@@ -77,7 +77,7 @@ struct PeakDetailView: View {
         let shown: String = visible.peak.displayName(language: Locale.current.language.languageCode?.identifier)
         var seen: Set<String> = [shown]
         var candidates: [String] = [visible.peak.name]
-        for language in ["de", "fr", "it", "en"] {
+        for language in ["local", "de", "fr", "it", "en"] {
             if let n = visible.peak.names[language] { candidates.append(n) }
         }
         var result: [String] = []

@@ -216,3 +216,13 @@ def test_osm_peaks_cached_and_pbf_dropped(tmp_path, monkeypatch):
     cached = tmp_path / "osm-peaks" / "europe_testland-latest.osm.json"
     assert json.loads(cached.read_text())[0]["name"] == "Test"
     assert osm.osm_peaks_for_country("TL", tmp_path) == first and len(calls) == 1  # second call: from cache
+
+
+def test_peak_db_uses_readable_name(tmp_path):
+    db = tmp_path / "n.sqlite"
+    write_peak_db(db, [Peak(28.55, 84.56, name="मनास्लु", alt_names=["Manaslu"], ele=8163, osm_id=9, sources=["osm"])],
+                  {"country": "NP"})
+    con = sqlite3.connect(db)
+    name, names = con.execute("SELECT name, names FROM peaks").fetchone()
+    assert name == "Manaslu" and '"local": "मनास्लु"' in names
+    assert con.execute("SELECT count(*) FROM peaks_fts WHERE peaks_fts MATCH 'manaslu'").fetchone()[0] == 1

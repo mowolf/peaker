@@ -56,9 +56,24 @@ public struct PeakInfo: Sendable, Identifiable, Hashable {
         self.wikipedia = wikipedia; self.prominence = prominence
     }
 
+    /// Name to show: the user's language if known, else a readable (Latin-script) name, else the local name.
+    /// OSM's main name is in the local script (Everest: "珠穆朗玛峰 ཇོ་མོ་གླང་མ། सगरमाथा"), which most
+    /// visitors can't read, so English or another Latin-script name wins over it.
     public func displayName(language: String?) -> String {
         if let language, let n = names[language], !n.isEmpty { return n }
+        if Self.isLatinScript(name) { return name }
+        if let en = names["en"], !en.isEmpty { return en }
+        if let latin = names.keys.sorted().compactMap({ names[$0] }).first(where: { !$0.isEmpty && Self.isLatinScript($0) }) {
+            return latin
+        }
         return name
+    }
+
+    /// True if the text only uses Latin letters (incl. accents), digits and common punctuation.
+    public static func isLatinScript(_ text: String) -> Bool {
+        text.unicodeScalars.allSatisfy { s in
+            s.value < 0x0250 || (0x1E00...0x1EFF).contains(s.value) || (0x2000...0x206F).contains(s.value)
+        }
     }
 }
 

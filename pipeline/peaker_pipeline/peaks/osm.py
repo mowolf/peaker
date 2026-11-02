@@ -30,6 +30,8 @@ def read_osm_peaks(path: Path | str, include_hills: bool = False) -> list[Peak]:
             continue
         tags = {t.k: t.v for t in node.tags}
         names = {k[5:]: v for k, v in tags.items() if k.startswith("name:") and len(k) <= 10 and v}
+        if tags.get("int_name"):
+            names.setdefault("int", tags["int_name"])
         alt = [v for k in ("alt_name", "old_name", "loc_name", "official_name") if (v := tags.get(k))]
         ele = parse_ele(tags.get("ele"))
         qid = tags.get("wikidata", "").strip()

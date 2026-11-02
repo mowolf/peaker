@@ -76,3 +76,21 @@ import Testing
     let placed = LabelLayout.place([old, new], rows: 1, previous: ["old": 0])
     #expect(placed.map(\.id) == ["old"])
 }
+
+@Test func displayNamePrefersReadableNames() {
+    let everest = PeakInfo(id: "e", name: "珠穆朗玛峰 ཇོ་མོ་གླང་མ། सगरमाथा", names: ["en": "Mount Everest", "ne": "सगरमाथा"],
+                           coordinate: GeoCoordinate(latitude: 27.99, longitude: 86.93), elevation: 8849, importance: 1)
+    #expect(everest.displayName(language: "de") == "Mount Everest")
+    #expect(everest.displayName(language: "ne") == "सगरमाथा")
+    let matterhorn = PeakInfo(id: "m", name: "Matterhorn", names: ["it": "Cervino", "en": "Matterhorn"],
+                              coordinate: GeoCoordinate(latitude: 45.98, longitude: 7.66), elevation: 4478, importance: 1)
+    #expect(matterhorn.displayName(language: "it") == "Cervino")
+    #expect(matterhorn.displayName(language: "fr") == "Matterhorn")  // local Latin name beats English
+    let onlyGerman = PeakInfo(id: "g", name: "मकालु", names: ["de": "Makalu"],
+                              coordinate: GeoCoordinate(latitude: 27.89, longitude: 87.09), elevation: 8485, importance: 1)
+    #expect(onlyGerman.displayName(language: "en") == "Makalu")
+    let onlyLocal = PeakInfo(id: "l", name: "मनास्लु", coordinate: GeoCoordinate(latitude: 28.55, longitude: 84.56),
+                             elevation: 8163, importance: 1)
+    #expect(onlyLocal.displayName(language: "en") == "मनास्लु")
+    #expect(PeakInfo.isLatinScript("Piz Palü – Ostgipfel") && !PeakInfo.isLatinScript("अन्नपूर्ण"))
+}

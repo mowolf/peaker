@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .merge import importance
 from .model import Peak
+from .names import choose_display_name
 
 SCHEMA_VERSION = 1
 
@@ -61,14 +62,18 @@ def write_peak_db(path: Path | str, peaks: list[Peak], meta: dict[str, str]) -> 
             if p.id in seen:
                 continue
             seen.add(p.id)
-            name = p.display_name()
-            rows.append((i, p.id, name, json.dumps(p.names, ensure_ascii=False, sort_keys=True) if p.names else None,
+            name, local = choose_display_name(p)  # readable main name; local script kept in names["local"]
+            names = dict(p.names)
+            if local and local != name:
+                names.setdefault("local", local)
+            name = name or p.display_name()
+            rows.append((i, p.id, name, json.dumps(names, ensure_ascii=False, sort_keys=True) if names else None,
                          round(p.lat, 6), round(p.lon, 6), p.ele, p.ele_source, p.dem_ele, p.prominence,
                          None if p.isolation_km is None else round(p.isolation_km, 2), importance(p), p.kind,
                          p.wikidata, p.osm_id, p.geonames_id, p.wikipedia, ",".join(p.sources),
                          ",".join(p.qa) or None))
             rtree.append((i, p.lat, p.lat, p.lon, p.lon))
-            fts.append((i, name, " ".join(p.names.values()), " ".join(p.alt_names)))
+            fts.append((i, name, " ".join(names.values()), " ".join(p.alt_names)))
             aliases += [(a, p.id) for a in p.all_ids if a != p.id]
         con.executemany(f"INSERT INTO peaks VALUES ({','.join('?' * 19)})", rows)
         con.executemany("INSERT INTO peaks_rtree VALUES (?, ?, ?, ?, ?)", rtree)
