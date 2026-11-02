@@ -32,14 +32,18 @@ struct ViewerView: View {
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
     }
 
-    @ViewBuilder private var background: some View {
-        if model.showsCamera && model.camera.isAuthorized {
-            CameraPreview(session: model.camera.session)
-                .ignoresSafeArea()
-        } else {
+    /// The camera preview stays in the view hierarchy once access is granted (so it isn't rebuilt on every
+    /// toggle) and fades in when frames arrive; until then the drawn sky and terrain stay visible.
+    private var background: some View {
+        ZStack {
             SkyBackground()
-                .ignoresSafeArea()
+            if model.camera.isAuthorized {
+                CameraPreview(session: model.camera.session)
+                    .opacity(model.showsCamera && model.camera.isRunning ? 1 : 0)
+                    .animation(.easeOut(duration: 0.25), value: model.showsCamera && model.camera.isRunning)
+            }
         }
+        .ignoresSafeArea()
     }
 }
 

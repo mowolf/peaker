@@ -20,7 +20,7 @@ struct PanoramaView: View {
             let labels = layoutLabels(pose: pose, size: size)
             Canvas(rendersAsynchronously: false) { context, size in
                 if let horizon = model.horizon {
-                    if !model.showsCamera {
+                    if !cameraVisible {
                         drawTerrain(&context, horizon: horizon, pose: pose, size: size)
                     }
                     drawRidges(&context, horizon: horizon, pose: pose, size: size)
@@ -37,6 +37,9 @@ struct PanoramaView: View {
             }
         }
     }
+
+    /// Camera frames are actually on screen (not just requested and still starting).
+    private var cameraVisible: Bool { model.showsCamera && model.camera.isRunning }
 
     // MARK: - Gestures
 
@@ -80,20 +83,13 @@ struct PanoramaView: View {
             .onEnded { _ in zoomStart = nil }
     }
 
-    /// Pinch always zooms: the camera's zoom while it is shown, otherwise the rendered field of view.
+    /// Pinch always zooms the one shared zoom level (camera zoom follows it while the camera is shown).
     private func handleZoom(magnification: Double) {
         guard magnification > 0 else { return }
-        if model.showsCamera {
-            if zoomStart == nil { zoomStart = model.cameraZoom }
-            let start: Double = zoomStart ?? 1
-            let zoom: Double = Swift.max(1.0, Swift.min(model.camera.maxZoom, start * magnification))
-            model.cameraZoom = zoom
-            model.camera.setZoom(zoom)
-        } else {
-            if zoomStart == nil { zoomStart = model.touchFieldOfView }
-            let start: Double = zoomStart ?? 55
-            model.touchFieldOfView = Swift.max(8.0, Swift.min(110.0, start / magnification))
-        }
+        if zoomStart == nil { zoomStart = model.fieldOfView }
+        let start: Double = zoomStart ?? 65
+        model.hasZoomed = true
+        model.setFieldOfView(start / magnification)
     }
 
     // MARK: - Drawing
@@ -124,7 +120,7 @@ struct PanoramaView: View {
     private func drawRidges(_ context: inout GraphicsContext, horizon: HorizonResult, pose: CameraPose, size: CGSize) {
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height) + 2
-        let camera = model.showsCamera
+        let camera = cameraVisible
         let gapLimit = horizon.settings.azimuthStep * 2.5
 
         // Far ridges first so near ones draw on top.
@@ -200,10 +196,10 @@ struct PanoramaView: View {
 
     private func layoutLabels(pose: CameraPose, size: CGSize) -> [PlacedLabel] {
         let density = model.settings.labelDensity
-        // Zoom: compare the horizontal field of view with the default 55°. Zoomed in, peaks spread out,
+        // Zoom relative to the default framing (camera's native angle). Zoomed in, peaks spread out,
         // so show more and smaller peaks; zoomed out, only the most important ones.
-        let fieldOfView: Double = 2 * atan(Double(size.width) / 2 / pose.focalLength) * 180 / Double.pi
-        let zoom: Double = Swift.max(0.4, Swift.min(4.0, 55.0 / fieldOfView))
+        let fieldOfView: Double = 2 * atan(Double(size.height) / 2 / pose.focalLength) * 180 / Double.pi
+        let zoom: Double = Swift.max(0.4, Swift.min(4.0, model.camera.fieldOfView / fieldOfView))
         let maxLabels: Int = Int((Double(density.maxLabels) * Swift.min(2.5, zoom)).rounded())
         let minImportance: Double = density.minImportance / zoom
         let language = Locale.current.language.languageCode?.identifier

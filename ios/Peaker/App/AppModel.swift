@@ -46,13 +46,15 @@ final class AppModel {
     private(set) var isComputing = false
     private(set) var noDataHere = false
 
-    // Manual view direction and zoom (zoom also applies while following without the camera).
+    // Manual view direction.
     var touchYaw: Double = 255
     var touchPitch: Double = 3
-    /// Horizontal field of view of the rendered view (degrees); pinch to change.
-    var touchFieldOfView: Double = 55
-    /// Camera zoom factor (1 = widest); pinch to change while the camera is shown.
-    var cameraZoom: Double = 1
+    /// Zoom, shared by the drawn and the camera view: field of view across the screen height (degrees).
+    /// Starts at the camera's native angle so both views show the same framing; pinch changes it.
+    /// While the camera is shown it is limited to what the lens can do (no wider than its native angle).
+    private(set) var fieldOfView: Double = 65
+    /// The user pinched: don't reset the zoom to the camera's native angle any more.
+    var hasZoomed = false
 
     /// Hand alignment on top of the sensors (compass error); drag while the camera is shown.
     var headingOffset: Double = 0
@@ -129,6 +131,14 @@ final class AppModel {
             Task { @MainActor in await self?.recompute() }
         }
         location.requestAndStart()
+        // Configure the camera ahead of time so switching it on is quick; once the real lens angle is
+        // known, start with exactly the camera's framing (and keep zoom/camera in sync).
+        camera.onConfigured = { [weak self] in
+            guard let self else { return }
+            if !self.hasZoomed { self.fieldOfView = self.camera.fieldOfView }
+            self.setFieldOfView(self.fieldOfView)
+        }
+        camera.prepare()
         setFollowing(true)  // start with automatic direction when the device has the sensors
         await recompute(force: true)
         await packs.refreshCatalog()
@@ -158,12 +168,31 @@ final class AppModel {
         if on {
             setFollowing(true)
             guard isFollowingDevice else { return }
-            camera.start()
-            camera.setZoom(cameraZoom)
             showsCamera = true
+            setFieldOfView(fieldOfView)  // clamp to the lens and apply the matching camera zoom
+            camera.start()
         } else {
             camera.stop()
             showsCamera = false
+        }
+    }
+
+    /// Range of fields of view the camera can show: its native angle down to its maximum zoom.
+    var cameraFieldOfViewRange: ClosedRange<Double> {
+        let base = camera.fieldOfView
+        let narrowest = 2 * atan(tan(base * Double.pi / 360) / max(1, camera.maxZoom)) * 180 / Double.pi
+        return narrowest...base
+    }
+
+    /// Set the zoom (vertical field of view, degrees) for whichever view is showing.
+    func setFieldOfView(_ value: Double) {
+        if showsCamera {
+            let range = cameraFieldOfViewRange
+            fieldOfView = min(max(value, range.lowerBound), range.upperBound)
+            let factor = tan(range.upperBound * Double.pi / 360) / tan(fieldOfView * Double.pi / 360)
+            camera.setZoom(factor)
+        } else {
+            fieldOfView = min(max(value, 10), 120)
         }
     }
 
@@ -184,22 +213,16 @@ final class AppModel {
         if isFollowingDevice, let pose = currentDevicePose(size: size) {
             return pose
         }
-        let focal = CameraPose.focalLength(fieldOfView: touchFieldOfView, pixelsAcross: size.width)
+        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: size.height)
         return CameraPose(yaw: touchYaw, pitch: touchPitch, focalLength: focal,
                           centerX: size.width / 2, centerY: size.height / 2)
     }
 
     private func currentDevicePose(size: CGSize) -> CameraPose? {
         guard let q = motion.attitude else { return nil }
-        let focal: Double
-        if showsCamera {
-            // Preview is aspect-filled in portrait: the camera's long side spans the screen height.
-            let halfAngle: Double = camera.fieldOfView * Double.pi / 360
-            let zoomedHalfAngle: Double = atan(tan(halfAngle) / max(1, cameraZoom))
-            focal = Double(size.height) / 2 / tan(zoomedHalfAngle)
-        } else {
-            focal = CameraPose.focalLength(fieldOfView: touchFieldOfView, pixelsAcross: size.width)
-        }
+        // Same projection for both views. The camera preview is aspect-filled in portrait, so its long side
+        // (the lens angle, narrowed by the zoom factor set in setFieldOfView) spans the screen height.
+        let focal = CameraPose.focalLength(fieldOfView: fieldOfView, pixelsAcross: size.height)
         return CameraPose(deviceAttitude: q, focalLength: focal, centerX: size.width / 2, centerY: size.height / 2)
             .rotatedYaw(by: headingOffset)
             .pitched(by: pitchOffset)
