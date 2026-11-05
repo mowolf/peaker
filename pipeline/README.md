@@ -30,6 +30,15 @@ peaker-pipeline pack CH --res 90 30            # also build the 30 m high-detail
 peaker-pipeline pack CH --no-osm               # Wikidata + GeoNames only (when Geofabrik is unreachable)
 peaker-pipeline pack CH --osm-pbf switzerland-latest.osm.pbf
 
+# A whole continent, tiles only: 90 m everywhere, 30 m where the terrain is mountainous (≥ 1000 m relief or
+# summits ≥ 1500 m), clipped to the mainland (no overseas territories); ~70 min for Europe on 4 cores
+peaker-pipeline build-tiles --continent Europe --exclude RU --clip=-32,34,45,72 --out out --workers 4
+# then the peak packs from the published/built tile index (no tile files needed), e.g. with openstreetmap.fr
+# where Geofabrik isn't reachable (CI uses Geofabrik):
+peaker-pipeline pack CH --res 90 30 --tile-index out/v1 --osm-mirror osmfr --no-wikidata --clip=-32,34,45,72
+# publish into a checkout of mowolf/height-data (push tiles in < 2 GB batches)
+peaker-pipeline publish --out out --repo ../../height-data
+
 # Export a built pack for bundling in the iOS app (optionally cut to a bbox)
 peaker-pipeline bundle NP --dest ../ios/Peaker/Resources/BundledPacks/NP
 

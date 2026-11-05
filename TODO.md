@@ -84,9 +84,9 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [x] **K-1** For each country: tiles = tiles intersecting (country polygon + buffer from F-4).
 - [x] **K-2** Write `catalog.json`: dataset version, and per country the ISO 3166-1 code, localised name,
       bbox, tile list, peak DB URL, total size and checksums.
-- [ ] **K-3** *(first pack built locally: CH = 23 tiles / 25 MB + 24k peaks / 3.5 MB)* Upload to hosting (F-7) with immutable versioned paths and correct cache headers.
+- [x] **K-3** *(published to mowolf/height-data: Europe (50 countries, 1,199 tiles 90 m + 379 tiles 30 m, ~2.4 GB) + Nepal)* Upload to hosting (F-7) with immutable versioned paths and correct cache headers.
 - [ ] **K-4** CI job (GitHub Actions) to rebuild the peak DBs on a schedule (OSM changes often; the DEM rarely does).
-- [ ] **K-6** Regions for large countries (US ≈ 1.5 GB, RU, CA, CN, BR, AU at 90 m): split by admin-1
+- [ ] **K-6** *(Russia/large countries still open; Europe done without RU)* Regions for large countries (US ≈ 1.5 GB, RU, CA, CN, BR, AU at 90 m): split by admin-1
       (Natural Earth states/provinces) or named mountain regions. The format already supports this.
 - [x] **K-7** *(done in the app at tile load: SummitBurnIn + labels snapped to the drawn summit)* Summit burn-in: raise the DEM around each peak to its official height (the DEM cuts sharp summits
       100–150 m too low, e.g. Matterhorn).
