@@ -2,6 +2,12 @@
 
 SwiftUI app for iOS 26 (Liquid Glass). The project file is generated from `project.yml` by XcodeGen.
 
+Features (V1): ridge lines and peak labels from offline elevation data; direction from gyro + compass or by
+dragging; pinch zoom shared between the drawn view and the live camera (with hand alignment for compass
+error); landscape panorama; sun path with real sunrise/sunset over the terrain; GPS with accuracy-aware updates;
+fixed viewpoints (Gornergrat, Kala Patthar, Poon Hill); country downloads from
+[mowolf/height-data](https://github.com/mowolf/height-data) with 30 m terrain near the viewer.
+
 ```sh
 brew install xcodegen
 cd ios && xcodegen          # creates Peaker.xcodeproj
