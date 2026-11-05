@@ -24,6 +24,7 @@ class Country:
     name: str
     geometry: BaseGeometry  # lon/lat, EPSG:4326
     wikidata: str | None = None
+    continent: str | None = None
 
     @property
     def bbox(self) -> tuple[float, float, float, float]:
@@ -36,13 +37,13 @@ def load_countries(cache_dir: Path) -> dict[str, Country]:
     if not path.exists():
         download(NE_URL, path)
     out: dict[str, Country] = {}
-    for code, name, qid, geom in _read_rows(path):
+    for code, name, qid, continent, geom in _read_rows(path):
         if not code or code == "-99" or geom is None:
             continue
         if code in out:  # some codes appear more than once (e.g. overseas parts) → merge
             out[code].geometry = unary_union([out[code].geometry, geom])
         else:
-            out[code] = Country(code, name, geom, qid or None)
+            out[code] = Country(code, name, geom, qid or None, continent or None)
     return out
 
 
@@ -50,12 +51,12 @@ def _read_rows(path: Path):
     import pyogrio
     from shapely import from_wkb
 
-    wanted = ["ISO_A2_EH", "NAME_EN", "WIKIDATAID"]
+    wanted = ["ISO_A2_EH", "NAME_EN", "WIKIDATAID", "CONTINENT"]
     meta, _, geoms, fields = pyogrio.raw.read(f"/vsizip/{path}", columns=wanted)
     idx = {name: i for i, name in enumerate(meta["fields"])}  # returned in file order, not request order
     cols = [fields[idx[w]] for w in wanted]
-    for code, name, qid, wkb in zip(*cols, geoms):
-        yield code, name, qid, (from_wkb(wkb) if wkb is not None else None)
+    for code, name, qid, continent, wkb in zip(*cols, geoms):
+        yield code, name, qid, continent, (from_wkb(wkb) if wkb is not None else None)
 
 
 def tiles_for_geometry(geom: BaseGeometry, buffer_km: float) -> list[TileId]:

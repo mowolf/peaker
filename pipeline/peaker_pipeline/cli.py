@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
 from pathlib import Path
@@ -35,6 +36,21 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--drop-pbf", action="store_true",
                    help="delete each Geofabrik extract after reading it (saves disk in CI)")
     p.add_argument("--peaks-db", type=Path, help="reuse the peaks of an existing peak DB (rebuild tiles only)")
+    p.add_argument("--workers", type=int, default=1, help="parallel tile encoding")
+    p.add_argument("--tile-index", help="use published tiles (dir or URL of …/v1) instead of building them")
+    p.add_argument("--clip", help="west,south,east,north: only this part of the country")
+
+    p = sub.add_parser("build-tiles", help="build elevation tiles only (no peaks), e.g. for a whole continent")
+    p.add_argument("country", nargs="*", help="ISO codes (or use --continent)")
+    p.add_argument("--continent", help="all countries of a Natural Earth continent, e.g. Europe")
+    p.add_argument("--exclude", nargs="*", default=[], help="ISO codes to skip, e.g. RU")
+    p.add_argument("--clip", help="west,south,east,north: only this part of each country (no overseas parts)")
+    p.add_argument("--out", type=Path, default=Path("out"))
+    p.add_argument("--res", choices=["90", "30"], nargs="+", default=["90", "30"])
+    p.add_argument("--buffer-km", type=float, default=50)
+    p.add_argument("--workers", type=int, default=os.cpu_count() or 1)
+    p.add_argument("--hd-min-relief", type=float, default=1000, help="30 m only for tiles with this much relief…")
+    p.add_argument("--hd-min-peak", type=float, default=1500, help="…or summits at least this high")
 
     p = sub.add_parser("bundle", help="export a built pack for bundling in the iOS app")
     p.add_argument("country", help="pack to export (must be built into --out first)")
@@ -84,10 +100,26 @@ def main(argv: list[str] | None = None) -> None:
             include_hills=args.hills,
             keep_pbf=not args.drop_pbf,
             peaks_db=args.peaks_db,
+            workers=args.workers,
+            tile_index=args.tile_index,
+            clip=tuple(float(v) for v in args.clip.split(",")) if args.clip else None,
         )
         for code in args.country:
             report = build_pack(code, args.out, args.cache, opts)
             print(json.dumps(report, indent=1, ensure_ascii=False))
+
+    elif args.cmd == "build-tiles":
+        from .countries import load_countries
+        from .packs import PackOptions, build_country_tiles
+
+        codes = [c.upper() for c in args.country]
+        if args.continent:
+            codes += sorted(c.code for c in load_countries(args.cache).values() if c.continent == args.continent)
+        codes = [c for c in dict.fromkeys(codes) if c not in {e.upper() for e in args.exclude}]
+        opts = PackOptions(resolutions=[Resolution(r) for r in args.res], buffer_km=args.buffer_km,
+                           workers=args.workers, hd_min_relief=args.hd_min_relief, hd_min_peak=args.hd_min_peak,
+                           clip=tuple(float(v) for v in args.clip.split(",")) if args.clip else None)
+        print(json.dumps(build_country_tiles(codes, args.out, args.cache, opts)))
 
     elif args.cmd == "bundle":
         from .bundle import export_bundle

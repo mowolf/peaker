@@ -16,7 +16,9 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import time
+from typing import Callable
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,6 +63,14 @@ class PackOptions:
     include_hills: bool = False
     keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
     peaks_db: Path | None = None  # reuse the peaks of an existing peak DB instead of collecting them
+    workers: int = 1  # parallel tile encoding
+    # 30 m only where it matters for peak views: tiles with this much relief or summits this high.
+    hd_min_relief: float = 1000
+    hd_min_peak: float = 1500
+    # Published tiles (dir or URL of .../v1): write manifests from their index instead of building tiles.
+    tile_index: str | None = None
+    # Only the part of the country inside this (west, south, east, north) box, e.g. Europe without overseas parts.
+    clip: tuple[float, float, float, float] | None = None
     codec: str = DEFAULT_CODEC
 
 
@@ -72,26 +82,112 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_tiles(tiles: list[TileId], source: TileSource, out_dir: Path, codec_name: str) -> list[dict]:
-    """Encode tiles that aren't built yet. Returns manifest entries for all land tiles."""
-    codec = codec_by_name(codec_name)
-    entries = []
+def _tile_header_range(path: Path) -> tuple[int, int] | None:
+    """(min, max) height from a .pkt header, without decoding the tile."""
+    import struct
+
+    from .encode import HEADER
+
+    try:
+        with open(path, "rb") as f:
+            h = HEADER.unpack(f.read(HEADER.size))
+        return h[11], h[12]
+    except (OSError, ValueError, struct.error):
+        return None
+
+
+def is_mountainous(tile: TileId, out_dir: Path, min_relief: float, min_peak: float) -> bool:
+    """Decide from the tile's 90 m version whether 30 m is worth it (flat land gains nothing for peak views)."""
+    r = _tile_header_range(out_dir / "tiles" / "90" / f"{tile.name}.pkt")
+    if r is None:
+        return True
+    lo, hi = r
+    return (hi - lo) >= min_relief or hi >= min_peak
+
+
+_worker_source: TileSource | None = None
+
+
+def _init_worker(res_value: str, cache_dir: str) -> None:
+    global _worker_source
+    _worker_source = TileSource(Resolution(res_value), cache_dir)
+
+
+def _encode_one(name: str, path: str, codec_name: str) -> tuple[str, float]:
+    t = TileId.parse(name)
+    g = _worker_source.grid(t)
+    assert g is not None
+    data = pack_tile(t.lat, t.lon, g.heights, codec_by_name(codec_name))
+    tmp = Path(path).with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    return name, len(data) / 1e6
+
+
+def build_tiles(tiles: list[TileId], source: TileSource, out_dir: Path, codec_name: str, workers: int = 1,
+                only: "Callable[[TileId], bool] | None" = None) -> list[dict]:
+    """Encode tiles that aren't built yet (in parallel). Returns manifest entries for the land tiles.
+
+    ``only`` filters which tiles to build at all (e.g. 30 m only for mountainous tiles).
+    """
     tile_dir = out_dir / "tiles" / source.res.value
     tile_dir.mkdir(parents=True, exist_ok=True)
-    for i, t in enumerate(tiles, 1):
-        if not source.exists(t):
-            continue  # ocean: the app treats missing land tiles as sea level
-        path = tile_dir / f"{t.name}.pkt"
-        if not path.exists():
+    wanted = [t for t in tiles if source.exists(t) and (only is None or only(t))]
+    todo = [t for t in wanted if not (tile_dir / f"{t.name}.pkt").exists()]
+    if todo:
+        log.info("%s m: %d tiles to encode (%d already built), %d workers", source.res.value, len(todo),
+                 len(wanted) - len(todo), workers)
+    if todo and workers > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        with ProcessPoolExecutor(workers, initializer=_init_worker,
+                                 initargs=(source.res.value, str(source.cache_dir.parent))) as pool:
+            futures = [pool.submit(_encode_one, t.name, str(tile_dir / f"{t.name}.pkt"), codec_name) for t in todo]
+            for i, f in enumerate(as_completed(futures), 1):
+                name, mb = f.result()
+                log.info("[%d/%d] %s %s: %.2f MB", i, len(todo), source.res.value, name, mb)
+    else:
+        codec = codec_by_name(codec_name)
+        for i, t in enumerate(todo, 1):
             g = source.grid(t)
             assert g is not None
             data = pack_tile(t.lat, t.lon, g.heights, codec)
+            path = tile_dir / f"{t.name}.pkt"
             tmp = path.with_suffix(".tmp")
             tmp.write_bytes(data)
             tmp.replace(path)
-            log.info("[%d/%d] %s %s: %.2f MB", i, len(tiles), source.res.value, t, len(data) / 1e6)
-        entries.append({"name": t.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
-    return entries
+            log.info("[%d/%d] %s %s: %.2f MB", i, len(todo), source.res.value, t, len(data) / 1e6)
+    index = update_tile_index(tile_dir, [t.name for t in wanted])
+    return [index[t.name] for t in wanted]
+
+
+def update_tile_index(tile_dir: Path, names: list[str]) -> dict[str, dict]:
+    """``tiles/<res>/index.json``: name → {name, bytes, sha256, min, max}. Lets CI write manifests for
+    published tiles without having the tile files (see ``--tile-index``)."""
+    path = tile_dir / "index.json"
+    index = json.loads(path.read_text()) if path.exists() else {}
+    for name in names:
+        f = tile_dir / f"{name}.pkt"
+        entry = index.get(name)
+        if entry is None or entry["bytes"] != f.stat().st_size:
+            r = _tile_header_range(f) or (0, 0)
+            index[name] = {"name": name, "bytes": f.stat().st_size, "sha256": sha256_file(f), "min": r[0], "max": r[1]}
+    path.write_text(json.dumps(dict(sorted(index.items())), indent=0))
+    return index
+
+
+def load_tile_index(source: str, res: str) -> dict[str, dict]:
+    """Tile index from a local directory/checkout or a URL prefix (…/v1)."""
+    if source.startswith("http"):
+        import requests
+
+        r = requests.get(f"{source.rstrip('/')}/tiles/{res}/index.json", timeout=120)
+        if r.status_code == 404:
+            return {}
+        r.raise_for_status()
+        return r.json()
+    path = Path(source) / "tiles" / res / "index.json"
+    return json.loads(path.read_text()) if path.exists() else {}
 
 
 def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: list[TileId],
@@ -140,6 +236,9 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
     if code not in countries:
         raise KeyError(f"unknown country code {code}")
     country = countries[code]
+    if opts.clip:
+        country = Country(country.code, country.name, country.geometry.intersection(box(*opts.clip)),
+                          country.wikidata, country.continent)
     out_v = out / f"v{FORMAT_VERSION}"
     tiles = tiles_for_geometry(country.geometry, opts.buffer_km)
     log.info("%s %s: %d tiles within %.0f km", code, country.name, len(tiles), opts.buffer_km)
@@ -156,7 +255,20 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
     }
     sources = {r: TileSource(r, cache_dir) for r in opts.resolutions}
     for res, src in sources.items():
-        manifest["tiles"][res.value] = build_tiles(tiles, src, out_v, opts.codec)
+        if opts.tile_index:
+            index = load_tile_index(opts.tile_index, res.value)
+            entries = [index[t.name] for t in tiles if t.name in index]
+            if res == opts.resolutions[0]:
+                missing = [t.name for t in tiles if src.exists(t) and t.name not in index]
+                if missing:
+                    raise RuntimeError(f"{len(missing)} {res.value} m tiles not in the published index: {missing[:5]}")
+            manifest["tiles"][res.value] = [{k: e[k] for k in ("name", "bytes", "sha256")} for e in entries]
+        else:
+            only = None
+            if res == Resolution.GLO30:
+                only = lambda t: is_mountainous(t, out_v, opts.hd_min_relief, opts.hd_min_peak)  # noqa: E731
+            entries = build_tiles(tiles, src, out_v, opts.codec, workers=opts.workers, only=only)
+            manifest["tiles"][res.value] = [{k: e[k] for k in ("name", "bytes", "sha256")} for e in entries]
 
     # Peaks: the area is the land tiles of the base resolution.
     base = sources[opts.resolutions[0]]
@@ -258,3 +370,31 @@ def update_catalog(out: Path, sources: dict[Resolution, TileSource]) -> dict:
     }
     (out_v / "catalog.json").write_text(json.dumps(catalog, indent=1, ensure_ascii=False))
     return catalog
+
+
+def build_country_tiles(codes: list[str], out: Path, cache_dir: Path, opts: PackOptions,
+                        evict_hd_sources: bool = True) -> dict:
+    """Tiles only (no peaks/manifests), e.g. to publish a continent's tiles before its peak DBs exist."""
+    countries = load_countries(cache_dir)
+    out_v = out / f"v{FORMAT_VERSION}"
+    sources = {r: TileSource(r, cache_dir) for r in opts.resolutions}
+    summary = {}
+    for code in codes:
+        geom = countries[code].geometry
+        if opts.clip:
+            geom = geom.intersection(box(*opts.clip))
+        if geom.is_empty:
+            continue
+        tiles = tiles_for_geometry(geom, opts.buffer_km)
+        counts = {}
+        for res, src in sources.items():
+            only = None
+            if res == Resolution.GLO30:
+                only = lambda t: is_mountainous(t, out_v, opts.hd_min_relief, opts.hd_min_peak)  # noqa: E731
+            counts[res.value] = len(build_tiles(tiles, src, out_v, opts.codec, workers=opts.workers, only=only))
+            if res == Resolution.GLO30 and evict_hd_sources:
+                for f in src.cache_dir.glob("*.tif"):  # 40 MB each; re-downloaded if another country needs one
+                    f.unlink()
+        summary[code] = counts
+        log.info("%s: %s", code, counts)
+    return summary

@@ -10,7 +10,8 @@ tab, variables under the *Variables* tab.
 | `APP_STORE_CONNECT_PRIVATE_KEY` | secret | ios | Contents of the downloaded `AuthKey_<KEYID>.p8` (paste the text, or its base64) |
 | `APPLE_TEAM_ID` | secret | ios | 10-character Team ID (developer.apple.com → Membership) |
 | `IOS_BUNDLE_ID` | variable | ios | Optional. Default `com.moritzwolf.peaker` |
-| `R2_ACCESS_KEY_ID` | secret | build-packs | R2 API token: Access Key ID |
+| `HEIGHT_DATA_TOKEN` | secret | build-packs | Fine-grained token, repository `mowolf/height-data`, permission **Contents: Read and write** — lets the weekly job push peak databases |
+| `R2_ACCESS_KEY_ID` | secret | (R2 alternative) | R2 API token: Access Key ID |
 | `R2_SECRET_ACCESS_KEY` | secret | build-packs | R2 API token: Secret Access Key |
 | `R2_ACCOUNT_ID` | variable | build-packs | Cloudflare account ID (R2 overview page, right side) |
 | `R2_BUCKET` | variable | build-packs | Bucket name, e.g. `peaker-data` |
@@ -48,7 +49,16 @@ If export fails with a signing error (e.g. the key lacks the Admin role, or the 
 certificates disabled), the fallback is the classic setup: a distribution certificate `.p12` plus an App Store
 provisioning profile as secrets, imported into a temporary keychain. Ask and we'll switch the workflow.
 
-## Country packs on Cloudflare R2 (`.github/workflows/build-packs.yml`)
+## Country packs in mowolf/height-data (`.github/workflows/build-packs.yml`)
+
+Elevation tiles are built once with `peaker-pipeline build-tiles` (hours for a continent; 30 m only for
+mountainous tiles) and pushed to the public repo `mowolf/height-data`. The weekly `build-packs` job rebuilds only
+the peak databases of the countries in `pipeline/packs.txt` (OSM via Geofabrik + GeoNames, Wikidata where the
+line says `--wikidata`), using the published tile index, and pushes them with `HEIGHT_DATA_TOKEN`:
+GitHub → Settings → Developer settings → Fine-grained tokens → Generate: repository access *Only select
+repositories* → `mowolf/height-data`, Repository permissions → *Contents: Read and write*.
+
+## Alternative: Cloudflare R2
 
 1. Cloudflare dashboard → **R2** → *Create bucket* (e.g. `peaker-data`, location automatic).
 2. Make it public. Either bucket → *Settings* → *Public access* → **R2.dev subdomain: Allow** (quick, rate-limited),

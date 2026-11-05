@@ -1,5 +1,56 @@
-# Countries the scheduled build (.github/workflows/build-packs.yml) rebuilds every week.
-# ISO 3166-1 alpha-2 codes, whitespace separated; '#' starts a comment.
-# Add countries one at a time: the first build of a country is slow (Wikidata, Geofabrik downloads).
-CH
-NP
+# Countries the weekly build (.github/workflows/build-packs.yml) rebuilds and publishes to mowolf/height-data.
+# One per line: ISO 3166-1 alpha-2 code, then optional extra arguments for `peaker-pipeline pack`.
+# Wikidata is skipped unless the line has --wikidata (querying it tile by tile is slow; OSM carries Wikidata
+# IDs and multilingual names anyway). --clip keeps only the mainland/nearby islands (no overseas territories).
+NP --wikidata
+
+AD --clip=-32,34,45,72
+AL --clip=-32,34,45,72
+AT --clip=-32,34,45,72
+AX --clip=-32,34,45,72
+BA --clip=-32,34,45,72
+BE --clip=-32,34,45,72
+BG --clip=-32,34,45,72
+BY --clip=-32,34,45,72
+CH --clip=-32,34,45,72
+CZ --clip=-32,34,45,72
+DE --clip=-32,34,45,72
+DK --clip=-32,34,45,72
+EE --clip=-32,34,45,72
+ES --clip=-32,34,45,72
+FI --clip=-32,34,45,72
+FO --clip=-32,34,45,72
+FR --clip=-32,34,45,72
+GB --clip=-32,34,45,72
+GG --clip=-32,34,45,72
+GI --clip=-32,34,45,72
+GR --clip=-32,34,45,72
+HR --clip=-32,34,45,72
+HU --clip=-32,34,45,72
+IE --clip=-32,34,45,72
+IM --clip=-32,34,45,72
+IS --clip=-32,34,45,72
+IT --clip=-32,34,45,72
+JE --clip=-32,34,45,72
+LI --clip=-32,34,45,72
+LT --clip=-32,34,45,72
+LU --clip=-32,34,45,72
+LV --clip=-32,34,45,72
+MC --clip=-32,34,45,72
+MD --clip=-32,34,45,72
+ME --clip=-32,34,45,72
+MK --clip=-32,34,45,72
+MT --clip=-32,34,45,72
+NL --clip=-32,34,45,72
+NO --clip=-32,34,45,72
+PL --clip=-32,34,45,72
+PT --clip=-32,34,45,72
+RO --clip=-32,34,45,72
+RS --clip=-32,34,45,72
+SE --clip=-32,34,45,72
+SI --clip=-32,34,45,72
+SK --clip=-32,34,45,72
+SM --clip=-32,34,45,72
+UA --clip=-32,34,45,72
+VA --clip=-32,34,45,72
+XK --clip=-32,34,45,72
