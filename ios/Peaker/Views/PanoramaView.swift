@@ -103,17 +103,28 @@ struct PanoramaView: View {
         var started = false
         let step: CGFloat = 3
         var x: CGFloat = 0
+        // Far below the screen, so the fill also covers the corners while the phone is rolled.
+        let bottom: CGFloat = 2 * Swift.max(size.width, size.height)
+        var lastX: CGFloat = 0
         while x <= size.width + step {
             let az = pose.direction(x: Double(x), y: pose.centerY).azimuthAltitude.azimuth
             let alt = horizon.skylineAltitude(azimuth: az)
             if let p = pose.project(azimuth: az, altitude: alt) {
-                let pt = CGPoint(x: x, y: p.y)
-                if started { path.addLine(to: pt) } else { path.move(to: CGPoint(x: x, y: size.height)); path.addLine(to: pt); started = true }
+                // Use the projected point (not the column's x): with roll they differ.
+                let pt = CGPoint(x: p.x, y: p.y)
+                if started {
+                    path.addLine(to: pt)
+                } else {
+                    path.move(to: CGPoint(x: pt.x, y: bottom))
+                    path.addLine(to: pt)
+                    started = true
+                }
+                lastX = pt.x
             }
             x += step
         }
         guard started else { return }
-        path.addLine(to: CGPoint(x: size.width + step, y: size.height))
+        path.addLine(to: CGPoint(x: lastX, y: bottom))
         path.closeSubpath()
         context.fill(path, with: .linearGradient(
             Gradient(colors: [Color(red: 0.16, green: 0.20, blue: 0.28), Color(red: 0.05, green: 0.06, blue: 0.09)]),

@@ -4,6 +4,7 @@ import SwiftUI
 /// The main screen: full-screen panorama (camera or rendered), with floating Liquid Glass controls.
 struct ViewerView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         @Bindable var model = model
@@ -43,6 +44,8 @@ struct ViewerView: View {
         .onChange(of: model.settings.maxDistanceKm) { Task { await model.recompute() } }
         .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
+        // Pause camera and sensors in the background (battery), resume as they were.
+        .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
     }
 
     /// The camera preview stays in the view hierarchy once access is granted (so it isn't rebuilt on every
@@ -80,6 +83,7 @@ private struct TopBar: View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 CompassRibbon()
+                    .frame(maxWidth: 520)
                     .frame(height: 44)
                     .glassEffect(.regular, in: .capsule)
                     .glassEffectID("compass", in: glass)

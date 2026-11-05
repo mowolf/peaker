@@ -110,6 +110,9 @@ final class AppModel {
     private let recomputePolicy = RecomputePolicy()
     private var computedFor: ComputeKey?
     private let tileLoader = TileLoader()
+    /// Increases with every computation started; only the newest one's result is applied (GPS updates arrive
+    /// about once a second, a computation with 30 m terrain can take longer).
+    private var computeGeneration = 0
 
     /// The fixed viewpoint in use: the chosen one, or Gornergrat while there's no GPS fix.
     var fixedViewpoint: Viewpoint? {
@@ -221,7 +224,7 @@ final class AppModel {
         return narrowest...base
     }
 
-    /// Set the zoom (vertical field of view, degrees) for whichever view is showing.
+    /// Set the zoom (field of view across the screen's long side, degrees) for whichever view is showing.
     func setFieldOfView(_ value: Double) {
         if showsCamera {
             let range = cameraFieldOfViewRange
@@ -230,6 +233,18 @@ final class AppModel {
             camera.setZoom(factor)
         } else {
             fieldOfView = min(max(value, 10), 120)
+        }
+    }
+
+    /// App became active / inactive: pause or resume camera and motion sensors without changing the modes.
+    func setActive(_ active: Bool) {
+        if active {
+            if isFollowingDevice { motion.start() }
+            if showsCamera { camera.start() }
+            refreshSun()
+        } else {
+            camera.stop()
+            motion.stop()
         }
     }
 
@@ -286,8 +301,9 @@ final class AppModel {
         }
         computedFor = ComputeKey(viewpoint: target, accuracy: accuracy, maxDistance: maxDistance,
                                  packVersion: packVersion)
+        computeGeneration += 1
+        let generation = computeGeneration
         isComputing = true
-        defer { isComputing = false }
 
         let snapshot = packs.snapshot()
         let eyeHeight = settings.eyeHeight
@@ -312,6 +328,9 @@ final class AppModel {
             return ComputeOutput(ground: Double(ground), horizon: horizon, visible: horizon.visiblePeaks(peaks))
         }.value
 
+        // A newer computation started meanwhile: its result wins, don't show this older one.
+        guard generation == computeGeneration else { return }
+        isComputing = false
         observer = target
         if let output {
             noDataHere = false
