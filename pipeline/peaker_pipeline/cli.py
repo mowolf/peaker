@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--peaks-db", type=Path, help="reuse the peaks of an existing peak DB (rebuild tiles only)")
     p.add_argument("--workers", type=int, default=1, help="parallel tile encoding")
     p.add_argument("--tile-index", help="use published tiles (dir or URL of …/v1) instead of building them")
+    p.add_argument("--osm-mirror", choices=["geofabrik", "osmfr"], default="geofabrik",
+                   help="where to get OSM extracts (osmfr: openstreetmap.fr, Europe, not all countries)")
     p.add_argument("--clip", help="west,south,east,north: only this part of the country")
 
     p = sub.add_parser("build-tiles", help="build elevation tiles only (no peaks), e.g. for a whole continent")
@@ -102,6 +104,7 @@ def main(argv: list[str] | None = None) -> None:
             peaks_db=args.peaks_db,
             workers=args.workers,
             tile_index=args.tile_index,
+            osm_mirror=args.osm_mirror,
             clip=tuple(float(v) for v in args.clip.split(",")) if args.clip else None,
         )
         for code in args.country:

@@ -62,6 +62,7 @@ class PackOptions:
     use_geonames: bool = True
     include_hills: bool = False
     keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
+    osm_mirror: str = "geofabrik"  # or "osmfr" (openstreetmap.fr, Europe only, fewer countries)
     peaks_db: Path | None = None  # reuse the peaks of an existing peak DB instead of collecting them
     workers: int = 1  # parallel tile encoding
     # 30 m only where it matters for peak views: tiles with this much relief or summits this high.
@@ -203,8 +204,11 @@ def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: l
             osm_peaks += osm.read_osm_peaks(p, include_hills=opts.include_hills)
     elif opts.use_osm:
         for c in involved:
-            osm_peaks += osm.osm_peaks_for_country(c.code, cache_dir, include_hills=opts.include_hills,
-                                                   keep_pbf=opts.keep_pbf)
+            try:
+                osm_peaks += osm.osm_peaks_for_country(c.code, cache_dir, include_hills=opts.include_hills,
+                                                       keep_pbf=opts.keep_pbf, mirror=opts.osm_mirror)
+            except LookupError as e:
+                log.warning("no OSM peaks for %s: %s", c.code, e)
 
     # Wikidata is queried per tile (no country filter), cached per tile and shared between packs.
     wd_peaks = wikidata.fetch_area_peaks(area_tiles, cache_dir) if opts.use_wikidata else []

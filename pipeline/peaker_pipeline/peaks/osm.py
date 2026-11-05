@@ -81,8 +81,24 @@ def geofabrik_pbf_urls(cc: str, cache_dir: Path) -> list[str]:
     return [h["urls"]["pbf"] for h in top]
 
 
+# openstreetmap.fr country extracts in Europe (a fallback where Geofabrik isn't reachable). Countries not listed
+# here have no extract there.
+OSMFR_EUROPE = {
+    "AD": "andorra", "AT": "austria", "BE": "belgium", "CZ": "czech_republic", "DK": "denmark", "FI": "finland",
+    "FR": "france", "DE": "germany", "GI": "gibraltar", "GG": "guernesey", "IE": "ireland", "IT": "italy",
+    "JE": "jersey", "LU": "luxembourg", "MC": "monaco", "NL": "netherlands", "NO": "norway", "PL": "poland",
+    "PT": "portugal", "SM": "san_marino", "SK": "slovakia", "ES": "spain", "SE": "sweden", "CH": "switzerland",
+    "TR": "turkey", "UA": "ukraine", "GB": "united_kingdom", "VA": "vatican_city",
+}
+
+
+def osmfr_pbf_urls(cc: str) -> list[str]:
+    name = OSMFR_EUROPE.get(cc.upper())
+    return [f"https://download.openstreetmap.fr/extracts/europe/{name}-latest.osm.pbf"] if name else []
+
+
 def osm_peaks_for_country(cc: str, cache_dir: Path, include_hills: bool = False,
-                          keep_pbf: bool = True) -> list[Peak]:
+                          keep_pbf: bool = True, mirror: str = "geofabrik") -> list[Peak]:
     """Peaks of one country from Geofabrik.
 
     The extracted peaks are cached as JSON (``osm-peaks/``), which is tiny compared
@@ -94,12 +110,12 @@ def osm_peaks_for_country(cc: str, cache_dir: Path, include_hills: bool = False,
 
     from ..http import download
 
-    urls = geofabrik_pbf_urls(cc, cache_dir)
+    urls = osmfr_pbf_urls(cc) if mirror == "osmfr" else geofabrik_pbf_urls(cc, cache_dir)
     if not urls:
-        raise LookupError(f"no Geofabrik extract for {cc}")
+        raise LookupError(f"no {mirror} extract for {cc}")
     peaks: list[Peak] = []
     for url in urls:
-        rel = url.split("download.geofabrik.de/", 1)[-1]
+        rel = url.split("download.geofabrik.de/", 1)[-1].split("download.openstreetmap.fr/", 1)[-1]
         cached = Path(cache_dir) / "osm-peaks" / (rel.replace("/", "_") + ("-hills" if include_hills else "") + ".json")
         if cached.exists():
             peaks += [Peak.from_dict(d) for d in json.loads(cached.read_text())]
