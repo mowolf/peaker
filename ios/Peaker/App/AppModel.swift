@@ -3,7 +3,6 @@ import UIKit
 import Foundation
 import Observation
 import PeakerKit
-import SwiftUI
 
 @MainActor
 @Observable
@@ -125,7 +124,7 @@ final class AppModel {
 
     func start() async {
         location.onUpdate = { [weak self] _ in
-            Task { @MainActor in await self?.recompute() }
+            Task { await self?.recompute() }
         }
         location.requestAndStart()
         // Configure the camera ahead of time so switching it on is quick; once the real lens angle is

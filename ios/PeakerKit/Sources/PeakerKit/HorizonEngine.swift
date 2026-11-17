@@ -29,11 +29,25 @@ public struct RidgePoint: Sendable, Hashable {
 /// A ridge line: ridge points of neighbouring rays joined into a polyline.
 public struct Ridge: Sendable, Identifiable {
     public let id: Int
-    public var points: [RidgePoint]
+    public let points: [RidgePoint]
     /// True if the line is (mostly) the skyline, the outermost silhouette against the sky.
-    public var isSkyline: Bool
-    public var meanDistance: Double {
-        points.isEmpty ? 0 : points.reduce(0) { $0 + $1.distance } / Double(points.count)
+    public let isSkyline: Bool
+    /// Mean distance of the points (metres); stored, as drawing reads it every frame.
+    public let meanDistance: Double
+
+    init(id: Int, points: [RidgePoint], isSkyline: Bool) {
+        self.id = id
+        self.points = points
+        self.isSkyline = isSkyline
+        meanDistance = points.isEmpty ? 0 : points.reduce(0) { $0 + $1.distance } / Double(points.count)
+    }
+
+    /// Azimuth range the line covers (degrees): centre and half width. Points run clockwise from the first
+    /// to the last ray (possibly across north), so this is O(1); drawing uses it to skip ridges out of view.
+    public var azimuthRange: (center: Double, halfWidth: Double) {
+        guard let first = points.first, let last = points.last else { return (0, 0) }
+        let extent = Geo.normalizedDegrees(last.azimuth - first.azimuth)
+        return (Geo.normalizedDegrees(first.azimuth + extent / 2), extent / 2)
     }
 }
 

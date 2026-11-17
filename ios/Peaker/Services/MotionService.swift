@@ -4,9 +4,14 @@ import Observation
 import PeakerKit
 
 /// Device attitude relative to true north (Core Motion `xTrueNorthZVertical`), smoothed.
+///
+/// Updates arrive at 60 Hz on the main queue. Observation notifies on every assignment, even of an equal
+/// value, so only values that actually changed are assigned: otherwise every view reading
+/// `isCompassUncertain` would redraw 60 times a second.
+@MainActor
 @Observable
 final class MotionService {
-    private let manager = CMMotionManager()
+    @ObservationIgnored private let manager = CMMotionManager()
     private(set) var attitude: Quaternion?
     /// Compass calibration quality; low values mean the heading may be off by 10°+.
     private(set) var isCompassUncertain = false
@@ -23,17 +28,24 @@ final class MotionService {
         manager.showsDeviceMovementDisplay = true
         isRunning = true
         manager.startDeviceMotionUpdates(using: frame, to: .main) { [weak self] motion, _ in
-            guard let self, let motion else { return }
+            guard let motion else { return }
+            // Plain values out of the (non-Sendable) CMDeviceMotion; the handler runs on the main queue.
             let q = motion.attitude.quaternion
-            self.attitude = self.smooth(Quaternion(x: q.x, y: q.y, z: q.z, w: q.w))
+            let attitude = Quaternion(x: q.x, y: q.y, z: q.z, w: q.w)
             let accuracy = motion.magneticField.accuracy
-            self.isCompassUncertain = accuracy == .uncalibrated || accuracy == .low
+            let uncertain = accuracy == .uncalibrated || accuracy == .low
+            MainActor.assumeIsolated { self?.update(attitude, compassUncertain: uncertain) }
         }
     }
 
     func stop() {
         manager.stopDeviceMotionUpdates()
-        isRunning = false
+        if isRunning { isRunning = false }
+    }
+
+    private func update(_ q: Quaternion, compassUncertain: Bool) {
+        attitude = smooth(q)
+        if isCompassUncertain != compassUncertain { isCompassUncertain = compassUncertain }
     }
 
     /// Exponential smoothing on the quaternion (normalised lerp) to calm sensor jitter.

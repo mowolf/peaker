@@ -5,10 +5,11 @@ public struct ElevationTile: Sendable {
     public let id: TileID
     public let rows: Int
     public let cols: Int
-    /// Metres, row-major.
-    public let heights: [Int16]
+    /// Metres, row-major. Settable inside PeakerKit so `SummitBurnIn` can raise summits in place
+    /// (a 30 m tile is 26 MB; a copy per tile adds up).
+    public internal(set) var heights: [Int16]
     public let minHeight: Int16
-    public let maxHeight: Int16
+    public internal(set) var maxHeight: Int16
 
     public init(id: TileID, rows: Int, cols: Int, heights: [Int16]) {
         precondition(rows >= 2 && cols >= 2 && heights.count == rows * cols)
@@ -89,40 +90,58 @@ public enum TileCodec {
         let n = h.rows * h.cols
         let planes = try inflate(payload, 2 * n)
         guard planes.count == 2 * n else { throw TileDecodingError.sizeMismatch(expected: 2 * n, got: planes.count) }
-        let heights = decodeResidualPlanes([UInt8](planes), rows: h.rows, cols: h.cols, scale: h.scale, offset: h.offset)
+        // Decode straight from the inflated bytes (no copy into an array first).
+        let heights = planes.withUnsafeBytes { raw in
+            decodeResidualPlanes(raw.bindMemory(to: UInt8.self), rows: h.rows, cols: h.cols, scale: h.scale,
+                                 offset: h.offset)
+        }
         return ElevationTile(id: TileID(lat: h.lat, lon: h.lon), rows: h.rows, cols: h.cols, heights: heights)
     }
 
     /// Undo byte planes + planar predictor (mod 2^16), then quantisation.
     public static func decodeResidualPlanes(_ p: [UInt8], rows: Int, cols: Int, scale: Float, offset: Float) -> [Int16] {
+        precondition(p.count == 2 * rows * cols)
+        return p.withUnsafeBufferPointer { decodeResidualPlanes($0, rows: rows, cols: cols, scale: scale, offset: offset) }
+    }
+
+    /// Same, from a buffer. Writes the heights directly and keeps only two rows of predictor state, so a
+    /// 30 m tile (3601², 26 MB of heights) needs no extra full-size arrays while decoding.
+    public static func decodeResidualPlanes(_ p: UnsafeBufferPointer<UInt8>, rows: Int, cols: Int, scale: Float,
+                                            offset: Float) -> [Int16] {
         let n = rows * cols
         precondition(p.count == 2 * n)
-        var q = [UInt16](repeating: 0, count: n)
-        q.withUnsafeMutableBufferPointer { q in
-            p.withUnsafeBufferPointer { p in
-                for r in 0..<rows {
-                    let row = r * cols
-                    for c in 0..<cols {
-                        let i = row + c
-                        let res = UInt16(p[i]) << 8 | UInt16(p[n + i])
-                        let pred: UInt16
-                        if r == 0 {
-                            pred = c > 0 ? q[i - 1] : 0
-                        } else if c == 0 {
-                            pred = q[i - cols]
-                        } else {
-                            pred = q[i - 1] &+ q[i - cols] &- q[i - cols - 1]
+        let integer = scale == 1 && offset == offset.rounded()
+        let intOffset = integer ? Int32(offset) : 0
+        var previous = [UInt16](repeating: 0, count: cols)
+        var current = [UInt16](repeating: 0, count: cols)
+        return [Int16](unsafeUninitializedCapacity: n) { out, initialized in
+            previous.withUnsafeMutableBufferPointer { prevBuf in
+                current.withUnsafeMutableBufferPointer { curBuf in
+                    var prev = prevBuf, cur = curBuf
+                    for r in 0..<rows {
+                        let row = r * cols
+                        for c in 0..<cols {
+                            let i = row + c
+                            let res = UInt16(p[i]) << 8 | UInt16(p[n + i])
+                            let pred: UInt16
+                            if r == 0 {
+                                pred = c > 0 ? cur[c - 1] : 0
+                            } else if c == 0 {
+                                pred = prev[0]
+                            } else {
+                                pred = cur[c - 1] &+ prev[c] &- prev[c - 1]
+                            }
+                            let q = res &+ pred
+                            cur[c] = q
+                            out[i] = integer ? Int16(clamping: Int32(q) + intOffset)
+                                : Int16(clamping: Int((Float(q) * scale + offset).rounded()))
                         }
-                        q[i] = res &+ pred
+                        swap(&prev, &cur)
                     }
                 }
             }
+            initialized = n
         }
-        if scale == 1, offset == offset.rounded() {
-            let off = Int32(offset)
-            return q.map { Int16(clamping: Int32($0) + off) }
-        }
-        return q.map { Int16(clamping: Int(( Float($0) * scale + offset).rounded())) }
     }
 
     /// Raw DEFLATE via Apple's Compression framework (NSData `.zlib` = RFC 1951 without header).

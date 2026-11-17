@@ -16,6 +16,7 @@ enum LabelDensity: String, CaseIterable, Identifiable {
 }
 
 /// User settings, persisted in UserDefaults.
+@MainActor
 @Observable
 final class AppSettings {
     private let defaults = UserDefaults.standard

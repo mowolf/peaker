@@ -29,6 +29,8 @@ final class HorizonStore {
     private(set) var noDataHere = false
     /// Today's sun path with rise/set over the terrain; refreshed with the horizon and at midnight.
     private(set) var sunDay: Sun.Day?
+    /// Increases whenever a new result is shown; views key caches of per-result work on it.
+    private(set) var resultID = 0
 
     @ObservationIgnored private var sunDayStart: Date?
     @ObservationIgnored private let policy = RecomputePolicy()
@@ -54,6 +56,7 @@ final class HorizonStore {
         // A newer computation started meanwhile: its result wins, don't show this older one.
         guard mine == generation else { return }
         isComputing = false
+        resultID += 1
         observer = request.viewpoint
         if let output {
             noDataHere = false

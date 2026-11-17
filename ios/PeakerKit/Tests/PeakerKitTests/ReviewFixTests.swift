@@ -85,3 +85,35 @@ private func ring(rays: Int, skipping: Set<Int> = []) -> [[HorizonEngine.RawRidg
     let catalog = try Catalog.decode(Data(json.utf8))
     #expect(catalog.countries.first?.neighbours == nil)
 }
+
+@Test func ridgeAzimuthRangeAcrossNorth() {
+    let distances = (0..<20).map { Double($0 + 1) * 1000 }
+    var perRay = [[HorizonEngine.RawRidgePoint]](repeating: [], count: 100)
+    for ray in [97, 98, 99, 0, 1, 2] { perRay[ray] = [.init(sample: 10, tan: 0.02, skyline: false)] }
+    let ridge = try! #require(HorizonEngine.link(perRay: perRay, distances: distances, step: 3.6).first)
+    let range = ridge.azimuthRange
+    #expect(abs(Geo.angleDifference(range.center, -1.8)) < 1e-9)  // 349.2° … 7.2°
+    #expect(abs(range.halfWidth - 9) < 1e-9)
+}
+
+@Test func inPlaceBurnInMatchesCopy() {
+    let tile = ElevationTile(id: TileID(lat: 46, lon: 7), rows: 1201, cols: 1201,
+                             heights: [Int16](repeating: 1000, count: 1201 * 1201))
+    let summits = [SummitBurnIn.Summit(coordinate: GeoCoordinate(latitude: 46.5, longitude: 7.5), elevation: 1200)]
+    let copy = SummitBurnIn.apply(to: tile, summits: summits)
+    var inPlace = tile
+    SummitBurnIn.apply(summits, to: &inPlace)
+    #expect(inPlace.heights == copy.heights && inPlace.maxHeight == 1200 && inPlace.minHeight == 1000)
+    #expect(tile.heights.allSatisfy { $0 == 1000 })  // the original is untouched
+}
+
+@Test func decodesNonIntegerQuantisation() {
+    // 2×2 tile, residual planes for q = [10, 12, 11, 15] with scale 0.5, offset 100.25.
+    let q: [UInt16] = [10, 12, 11, 15]
+    // Predictor: r0c0 = 0, r0c1 = q[0], r1c0 = q[0], r1c1 = q[2] + q[1] - q[0]
+    let pred: [UInt16] = [0, 10, 10, 11 &+ 12 &- 10]
+    let res = zip(q, pred).map { $0 &- $1 }
+    let planes = res.map { UInt8($0 >> 8) } + res.map { UInt8($0 & 0xFF) }
+    let h = TileCodec.decodeResidualPlanes(planes, rows: 2, cols: 2, scale: 0.5, offset: 100.25)
+    #expect(h == q.map { Int16((Float($0) * 0.5 + 100.25).rounded()) })
+}
