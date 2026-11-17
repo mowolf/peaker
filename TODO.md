@@ -151,8 +151,9 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 - [x] **O-1** Fetch and cache `catalog.json`, and show a country list with sizes and search.
 - [ ] **O-2** Suggest the current country (reverse geocode the GPS position) and neighbouring countries for views across borders.
-- [x] **O-3** *(foreground downloads with progress, cancel, free-space check, and extra background time when
-      switching apps; true background session and Wi-Fi-only option still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
+- [x] **O-3** *(foreground downloads with progress, cancel, free-space check, extra background time when
+      switching apps, size confirmation, Wi-Fi only by default with a one-time mobile-data exception; true
+      background session still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
 - [x] **O-4** Verify SHA-256, then move tiles into Application Support (`isExcludedFromBackup = true`).
 - [x] **O-5** *(TileLedger: also protects tiles of running downloads; unused tiles removed at launch)* Shared tile
       store with reference counting, so deleting a country only removes tiles no other installed pack uses.

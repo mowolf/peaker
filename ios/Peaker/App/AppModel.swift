@@ -12,6 +12,7 @@ final class AppModel {
     let location = LocationService()
     let motion = MotionService()
     let camera = CameraService()
+    let network = NetworkMonitor()
     /// Horizon, visible peaks and sun for the current viewpoint.
     let horizonStore = HorizonStore()
 

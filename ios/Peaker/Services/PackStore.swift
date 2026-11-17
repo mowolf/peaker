@@ -248,9 +248,11 @@ final class PackStore {
     // MARK: - Install / remove
 
     /// Start downloading a country (no-op while it is already downloading).
-    func startInstall(_ entry: Catalog.CountryEntry) {
+    /// - Parameter allowsMobileData: false = Wi-Fi only; the download stops with a message on mobile data.
+    func startInstall(_ entry: Catalog.CountryEntry, allowsMobileData: Bool) {
         guard downloadTasks[entry.code] == nil else { return }
-        downloadTasks[entry.code] = Task { await install(entry) }
+        let session = PackDownloader.session(allowsMobileData: allowsMobileData)
+        downloadTasks[entry.code] = Task { await install(entry, session: session) }
     }
 
     /// Stop a running download. Tiles fetched so far are kept for the next try (see `install`).
@@ -260,7 +262,7 @@ final class PackStore {
 
     // `install` is split into small functions on purpose: one long async function containing the
     // task group made the Swift 6.2 compiler hang (SIL ClosureLifetimeFixup pass).
-    private func install(_ entry: Catalog.CountryEntry) async {
+    private func install(_ entry: Catalog.CountryEntry, session: URLSession) async {
         defer { downloadTasks[entry.code] = nil }
         guard let baseURL else { return }
         guard downloads[entry.code] == nil || downloads[entry.code]?.error != nil else { return }
@@ -271,7 +273,7 @@ final class PackStore {
         let background = BackgroundTime(name: "Download \(entry.name)") { [weak self] in self?.cancelInstall(code) }
         defer { background.end() }
         do {
-            let pack = try await downloadPack(entry, v1: baseURL.appendingPathComponent("v1"))
+            let pack = try await downloadPack(entry, v1: baseURL.appendingPathComponent("v1"), session: session)
             finishInstall(pack)
         } catch {
             // Tiles fetched so far stay on disk (with their checksums), so trying again right away resumes.
@@ -280,6 +282,8 @@ final class PackStore {
             saveChecksums()
             if Self.isCancellation(error) {
                 downloads[entry.code] = nil
+            } else if PackDownloader.isRefusedForMobileData(error) {
+                downloads[entry.code]?.error = PackError.needsWiFi.localizedDescription
             } else {
                 downloads[entry.code]?.error = error.localizedDescription
             }
@@ -301,7 +305,7 @@ final class PackStore {
         }
     }
 
-    private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL) async throws -> InstalledPack {
+    private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL, session: URLSession) async throws -> InstalledPack {
         let manifestData = try await PackDownloader.fetch(v1.appendingPathComponent(entry.manifest))
         let manifest = try PackManifest.decode(manifestData)
         let tiles = manifest.tiles["90"] ?? []
@@ -322,12 +326,12 @@ final class PackStore {
         // 90 m first: enough to show the view; then the high-detail 30 m tiles.
         for (resolution, list) in [("90", needed90), ("30", needed30)] where !list.isEmpty {
             try await PackDownloader.downloadTiles(list, resolution: resolution, from: v1,
-                                                   to: tilesDir(resolution)) { [weak self] tile in
+                                                   to: tilesDir(resolution), session: session) { [weak self] tile in
                 await self?.tileStored(tile, resolution: resolution, pack: code)
             }
         }
         let sqliteBytes = try await PackDownloader.downloadPeakDatabase(
-            manifest.peaks, from: v1, to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
+            manifest.peaks, from: v1, to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"), session: session)
         addProgress(code, bytes: manifest.peaks.bytes)
 
         var bytes = sqliteBytes

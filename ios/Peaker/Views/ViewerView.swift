@@ -4,10 +4,8 @@ import SwiftUI
 /// The main screen: full-screen panorama (camera or rendered), with floating Liquid Glass controls.
 struct ViewerView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        @Bindable var model = model
         ZStack {
             background
             PanoramaView()
@@ -24,37 +22,8 @@ struct ViewerView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .sheet(item: $model.selectedPeak) { peak in
-            PeakDetailView(visible: peak)
-                .presentationDetents([.height(340), .large])
-        }
-        .sheet(isPresented: $model.showDownloads) {
-            DownloadsView()
-        }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView()
-        }
-        // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
-        .onAppear { model.updateInterfaceOrientation() }
-        // The sun moves: refresh its day after midnight (current position is computed every frame).
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                model.horizonStore.refreshSun()
-            }
-        }
-        // The view-distance slider and eye-height stepper change in steps: wait until they rest before the
-        // (expensive) recompute. Cancelled and restarted on every change.
-        .task(id: [model.settings.maxDistanceKm, model.settings.eyeHeight]) {
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            await model.recompute()
-        }
-        .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-        .onChange(of: model.packs.version) { Task { await model.recompute() } }
-        // Pause camera and sensors in the background (battery), resume as they were.
-        .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
+        .modifier(ViewerSheets())
+        .modifier(ViewerLifecycle())
     }
 
     /// The camera preview stays in the view hierarchy once access is granted (so it isn't rebuilt on every
@@ -69,6 +38,58 @@ struct ViewerView: View {
             }
         }
         .ignoresSafeArea()
+    }
+}
+
+/// Peak details, offline maps and settings sheets. (Separate from `ViewerView.body`, which otherwise took
+/// Xcode > 300 ms to type-check.)
+private struct ViewerSheets: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        @Bindable var model = model
+        content
+            .sheet(item: $model.selectedPeak) { peak in
+                PeakDetailView(visible: peak)
+                    .presentationDetents([.height(340), .large])
+            }
+            .sheet(isPresented: $model.showDownloads) {
+                DownloadsView()
+            }
+            .sheet(isPresented: $model.showSettings) {
+                SettingsView()
+            }
+    }
+}
+
+/// Orientation, sun refresh, recomputing on setting and pack changes, pausing in the background.
+private struct ViewerLifecycle: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
+            .onAppear { model.updateInterfaceOrientation() }
+            // The sun moves: refresh its day after midnight (current position is computed every frame).
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    model.horizonStore.refreshSun()
+                }
+            }
+            // The view-distance slider and eye-height stepper change in steps: wait until they rest before the
+            // (expensive) recompute. Cancelled and restarted on every change.
+            .task(id: [model.settings.maxDistanceKm, model.settings.eyeHeight]) {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                await model.recompute()
+            }
+            .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
+            .onChange(of: model.packs.version) { Task { await model.recompute() } }
+            // Pause camera and sensors in the background (battery), resume as they were.
+            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
     }
 }
 

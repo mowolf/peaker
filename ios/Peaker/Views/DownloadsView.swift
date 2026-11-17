@@ -128,19 +128,14 @@ private struct CountryRow: View {
     @Environment(AppModel.self) private var model
     let entry: Catalog.CountryEntry
 
-    /// 90 m + 30 m tiles (each catalog size includes the peak DB once; good enough as an estimate).
-    private var downloadSize: Int { (entry.bytes["90"] ?? 0) + (entry.bytes["30"] ?? 0) }
-
     private var summary: String {
-        let size = ByteCountFormatter.string(fromByteCount: Int64(downloadSize), countStyle: .file)
-        var parts: [String] = ["\(entry.peaks.formatted()) peaks", size]
+        var parts: [String] = ["\(entry.peaks.formatted()) peaks", formattedSize(entry.downloadSize)]
         if entry.tiles["30"] != nil { parts.append("high detail") }
         return parts.joined(separator: " · ")
     }
 
     var body: some View {
-        let packs = model.packs
-        let state = packs.downloads[entry.code]
+        let state = model.packs.downloads[entry.code]
         HStack(spacing: 12) {
             Text(flag(entry.code))
                 .font(.title2)
@@ -161,38 +156,110 @@ private struct CountryRow: View {
                 }
             }
             Spacer()
-            if packs.isDownloaded(entry.code) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else if let state, state.error == nil {
-                Text(state.fraction, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Button {
-                    packs.cancelInstall(entry.code)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Cancel download of \(entry.name)")
-            } else {
-                Button {
-                    packs.clearError(entry.code)
-                    packs.startInstall(entry)
-                } label: {
-                    Image(systemName: state?.error == nil ? "arrow.down" : "arrow.clockwise")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Download \(entry.name)")
+            CountryRowAction(entry: entry, state: state)
+        }
+    }
+}
+
+/// Checkmark, progress with cancel, or the download button with its confirmation.
+private struct CountryRowAction: View {
+    @Environment(AppModel.self) private var model
+    let entry: Catalog.CountryEntry
+    let state: DownloadState?
+    @State private var confirming = false
+
+    var body: some View {
+        let packs = model.packs
+        if packs.isDownloaded(entry.code) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        } else if let state, state.error == nil {
+            Text(state.fraction, format: .percent.precision(.fractionLength(0)))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            RoundButton(icon: "xmark", label: "Cancel download of \(entry.name)") {
+                packs.cancelInstall(entry.code)
+            }
+        } else {
+            RoundButton(icon: state?.error == nil ? "arrow.down" : "arrow.clockwise",
+                        label: "Download \(entry.name)") {
+                confirming = true
+            }
+            .confirmationDialog("Download \(entry.name)?", isPresented: $confirming, titleVisibility: .visible) {
+                DownloadChoices(entry: entry)
+            } message: {
+                Text(confirmationMessage)
             }
         }
     }
+
+    /// Size first, then what the current connection means for this download.
+    private var confirmationMessage: String {
+        let size = "Up to \(formattedSize(entry.downloadSize)) (parts already on this iPhone are skipped)."
+        let network = model.network
+        let note: String
+        if !network.isConnected {
+            note = "You're offline right now."
+        } else if network.isUnmetered {
+            note = "Downloads over Wi-Fi."
+        } else if model.settings.allowsMobileDataDownloads {
+            note = "This uses mobile data."
+        } else {
+            note = "You're on mobile data or in Low Data Mode, and downloads over mobile data are off in Settings."
+        }
+        return size + "\n" + note
+    }
+}
+
+/// Buttons of the download confirmation.
+private struct DownloadChoices: View {
+    @Environment(AppModel.self) private var model
+    let entry: Catalog.CountryEntry
+
+    var body: some View {
+        let packs = model.packs
+        let onMobileData = model.network.isConnected && !model.network.isUnmetered
+        if onMobileData && !model.settings.allowsMobileDataDownloads {
+            // Wi-Fi only, but not on Wi-Fi: offer a one-time exception instead of a button that would just fail.
+            Button("Download Using Mobile Data") {
+                packs.clearError(entry.code)
+                packs.startInstall(entry, allowsMobileData: true)
+            }
+        } else {
+            Button("Download") {
+                packs.clearError(entry.code)
+                packs.startInstall(entry, allowsMobileData: model.settings.allowsMobileDataDownloads)
+            }
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+}
+
+private struct RoundButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.body.weight(.semibold))
+                .frame(width: 32, height: 32)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
+    }
+}
+
+private func formattedSize(_ bytes: Int) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+private extension Catalog.CountryEntry {
+    /// 90 m + 30 m tiles. Each catalog size includes the peak database, so this slightly over-counts:
+    /// fine for an "up to" estimate.
+    var downloadSize: Int { (bytes["90"] ?? 0) + (bytes["30"] ?? 0) }
 }
 
 /// Regional indicator emoji for an ISO 3166-1 alpha-2 code.
