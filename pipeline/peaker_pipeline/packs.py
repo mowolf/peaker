@@ -63,6 +63,8 @@ class PackOptions:
     include_hills: bool = False
     keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
     osm_mirror: str = "geofabrik"  # or "osmfr" (openstreetmap.fr, Europe only, fewer countries)
+    # Publish even if no OpenStreetMap peak lies inside the country itself (see check_osm_coverage).
+    allow_missing_osm: bool = False
     peaks_db: Path | None = None  # reuse the peaks of an existing peak DB instead of collecting them
     workers: int = 1  # parallel tile encoding
     # 30 m only where it matters for peak views: tiles with this much relief or summits this high.
@@ -191,6 +193,32 @@ def load_tile_index(source: str, res: str) -> dict[str, dict]:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+class MissingOSMPeaks(RuntimeError):
+    """The country's own OpenStreetMap peaks are missing (extract not found, or empty)."""
+
+
+def osm_peaks_inside(country: Country, peaks: list[Peak]) -> int:
+    """Number of OpenStreetMap peaks inside the country itself (not in the border buffer)."""
+    own = prep(country.geometry)
+    return sum(1 for p in peaks if p.osm_id is not None and own.contains(Point(p.lon, p.lat)))
+
+
+def check_osm_coverage(country: Country, peaks: list[Peak], opts: PackOptions) -> None:
+    """Refuse to build a pack whose country has no OpenStreetMap peaks of its own.
+
+    That happens when the country's extract is missing on the mirror used: the pack then only has GeoNames
+    peaks plus the neighbours' OSM peaks in the border buffer (the November 2026 build via openstreetmap.fr
+    published the Balkans, Iceland and the Baltics like that). Failing keeps the previously published pack.
+    Tiny countries without any tagged peak pass ``allow_missing_osm`` (``--allow-missing-osm`` in packs.txt).
+    """
+    if not opts.use_osm or opts.osm_pbfs or opts.allow_missing_osm:
+        return
+    if osm_peaks_inside(country, peaks) == 0:
+        raise MissingOSMPeaks(
+            f"no OpenStreetMap peaks inside {country.code} ({country.name}): its extract on '{opts.osm_mirror}' "
+            "is probably missing. Use another --osm-mirror, or --allow-missing-osm if it really has none.")
+
+
 def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: list[TileId],
                   cache_dir: Path, opts: PackOptions) -> tuple[list[Peak], list[str]]:
     """Peaks inside the pack area, including those in neighbouring countries."""
@@ -208,7 +236,8 @@ def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: l
                 osm_peaks += osm.osm_peaks_for_country(c.code, cache_dir, include_hills=opts.include_hills,
                                                        keep_pbf=opts.keep_pbf, mirror=opts.osm_mirror)
             except LookupError as e:
-                log.warning("no OSM peaks for %s: %s", c.code, e)
+                # The pack's own country is checked after merging (check_osm_coverage).
+                (log.error if c.code == country.code else log.warning)("no OSM peaks for %s: %s", c.code, e)
 
     # Wikidata is queried per tile (no country filter), cached per tile and shared between packs.
     wd_peaks = wikidata.fetch_area_peaks(area_tiles, cache_dir) if opts.use_wikidata else []
@@ -230,7 +259,9 @@ def collect_peaks(country: Country, countries: dict[str, Country], area_tiles: l
     log.info("raw peaks: osm=%d wikidata=%d geonames=%d", len(osm_peaks), len(wd_peaks), len(gn_peaks))
     merged = merge_peaks(osm_peaks, wd_peaks, gn_peaks)
     inside = prep(area)
-    return [p for p in merged if inside.contains(Point(p.lon, p.lat))], [c.code for c in involved]
+    result = [p for p in merged if inside.contains(Point(p.lon, p.lat))]
+    check_osm_coverage(country, result, opts)
+    return result, [c.code for c in involved]
 
 
 def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict:
@@ -320,6 +351,8 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
         "tile_mb": {r: round(sum(e["bytes"] for e in v) / 1e6, 1) for r, v in manifest["tiles"].items()},
         "peaks": len(peaks),
         "peaks_by_source": _count_sources(peaks),
+        # OSM peaks inside the country itself; 0 means its extract was missing (see check_osm_coverage).
+        "osm_peaks_in_country": osm_peaks_inside(country, peaks),
         "elevation_check": elevation_report(peaks),
         "seconds": round(time.time() - t0, 1),
     }

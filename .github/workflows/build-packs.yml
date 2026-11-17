@@ -99,12 +99,13 @@ jobs:
           files = sorted(glob.glob(os.path.join(os.environ["OUT"], "reports", "*.json")))
           if not files:
               print("No reports (build failed early)."); raise SystemExit
-          print("| pack | tiles | peaks | sources | build s |")
-          print("|---|---|---|---|---|")
+          print("| pack | tiles | peaks | OSM peaks in country | sources | build s |")
+          print("|---|---|---|---|---|---|")
           for f in files:
               r = json.load(open(f))
               src = ", ".join(f"{k}: {v}" for k, v in r["peaks_by_source"].items())
-              print(f"| {r['code']} | {r['tiles']} | {r['peaks']} | {src} | {r['seconds']} |")
+              own = r.get("osm_peaks_in_country", "?")
+              print(f"| {r['code']} | {r['tiles']} | {r['peaks']} | {own} | {src} | {r['seconds']} |")
           PY
 
       - name: Upload build as artifact

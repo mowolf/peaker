@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--osm-mirror", choices=["geofabrik", "osmfr"], default="geofabrik",
                    help="where to get OSM extracts (osmfr: openstreetmap.fr, Europe, not all countries)")
     p.add_argument("--clip", help="west,south,east,north: only this part of the country")
+    p.add_argument("--allow-missing-osm", action="store_true",
+                   help="build even without OpenStreetMap peaks inside the country (tiny countries)")
 
     p = sub.add_parser("build-tiles", help="build elevation tiles only (no peaks), e.g. for a whole continent")
     p.add_argument("country", nargs="*", help="ISO codes (or use --continent)")
@@ -105,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
             workers=args.workers,
             tile_index=args.tile_index,
             osm_mirror=args.osm_mirror,
+            allow_missing_osm=args.allow_missing_osm,
             clip=tuple(float(v) for v in args.clip.split(",")) if args.clip else None,
         )
         for code in args.country:
