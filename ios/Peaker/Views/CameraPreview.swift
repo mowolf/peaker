@@ -9,6 +9,9 @@ struct CameraPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
+        // Only shows the image: it stays in the view tree (invisible while the camera is off) and must never
+        // take touches meant for the controls and gestures on top of it.
+        view.isUserInteractionEnabled = false
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
         applyRotation(view)

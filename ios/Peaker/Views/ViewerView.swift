@@ -33,6 +33,7 @@ struct ViewerView: View {
             SkyBackground()
             if model.camera.isAuthorized {
                 CameraPreview(session: model.camera.session, rotationAngle: model.cameraRotationAngle)
+                    .allowsHitTesting(false)
                     .opacity(model.showsCamera && model.camera.isRunning ? 1 : 0)
                     .animation(.easeOut(duration: 0.25), value: model.showsCamera && model.camera.isRunning)
             }
@@ -187,9 +188,10 @@ private struct ViewpointChip: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .contentShape(Capsule())  // the whole capsule opens the menu, not just the text
+            .glassEffect(.regular, in: .capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
     }
 }
 
@@ -255,7 +257,6 @@ private struct CalibrationHint: View {
 /// Gyro (automatic direction) and camera toggles on the left; settings, downloads and compass on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
-    @Namespace private var glass
 
     var body: some View {
         GlassEffectContainer(spacing: 16) {
@@ -264,25 +265,24 @@ private struct ControlBar: View {
                              icon: "gyroscope", isOn: model.isFollowingDevice) {
                     model.setFollowing(!model.isFollowingDevice)
                 }
-                .glassEffectID("follow", in: glass)
                 .disabled(!model.motion.isAvailable)
 
                 ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
                              icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
                     model.setCamera(!model.showsCamera)
                 }
-                .glassEffectID("camera", in: glass)
 
                 Spacer(minLength: 0)
 
-                IconButton(title: "Settings", icon: "gearshape") { model.showSettings = true }
-                    .glassEffectID("settings", in: glass)
+                GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                    Image(systemName: "gearshape").font(.title3)
+                }
 
-                IconButton(title: "Offline maps", icon: "arrow.down.circle") { model.showDownloads = true }
-                    .glassEffectID("downloads", in: glass)
+                GlassCircleButton(title: "Offline maps", action: { model.showDownloads = true }) {
+                    Image(systemName: "arrow.down.circle").font(.title3)
+                }
 
                 CompassButton()
-                    .glassEffectID("compass-button", in: glass)
             }
             .animation(.smooth, value: model.isFollowingDevice)
             .animation(.smooth, value: model.showsCamera)
@@ -290,21 +290,35 @@ private struct ControlBar: View {
     }
 }
 
-/// Round glass button with an icon (title for VoiceOver).
-private struct IconButton: View {
+/// Round 52 pt glass button.
+///
+/// The glass and the hit area are part of the button's label: with the glass applied outside the button,
+/// only the small icon itself reacted to taps and taps on the rest of the circle went to the glass.
+/// Press feedback comes from the button style instead of interactive glass, which handles touches itself.
+private struct GlassCircleButton<Icon: View>: View {
     let title: String
-    let icon: String
+    var glass: Glass = .regular
     let action: () -> Void
+    @ViewBuilder let icon: () -> Icon
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
-                .font(.title3)
+            icon()
                 .frame(width: 52, height: 52)
+                .contentShape(Circle())
+                .glassEffect(glass, in: .circle)
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .buttonStyle(PressScaleStyle())
+        .accessibilityLabel(title)
+    }
+}
+
+/// Shrinks the label slightly while pressed.
+struct PressScaleStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -315,15 +329,11 @@ private struct ToggleButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
+        GlassCircleButton(title: title, glass: isOn ? Glass.regular.tint(.orange) : Glass.regular, action: action) {
+            Image(systemName: icon)
                 .font(.title3)
                 .foregroundStyle(isOn ? Color.white : Color.primary)
-                .frame(width: 52, height: 52)
         }
-        .buttonStyle(.plain)
-        .glassEffect(isOn ? Glass.regular.tint(.orange).interactive() : Glass.regular.interactive(), in: .circle)
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
@@ -334,23 +344,17 @@ private struct CompassButton: View {
 
     var body: some View {
         let heading = model.heading
-        Button {
-            withAnimation(.smooth) { model.faceNorth() }
-        } label: {
+        GlassCircleButton(title: "Compass, heading \(Int(heading.rounded())) degrees. Tap to face north.",
+                          action: { withAnimation(.smooth) { model.faceNorth() } }) {
             ZStack {
                 Image(systemName: "location.north.fill")
                     .font(.title3)
                     .foregroundStyle(.red)
-                    .rotationEffect(.degrees(-heading))
                 Text("N")
                     .font(.system(size: 9, weight: .heavy))
                     .offset(y: -19)
-                    .rotationEffect(.degrees(-heading))
             }
-            .frame(width: 52, height: 52)
+            .rotationEffect(.degrees(-heading))
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
-        .accessibilityLabel("Compass, heading \(Int(heading.rounded())) degrees. Tap to face north.")
     }
 }
