@@ -259,34 +259,41 @@ private struct ControlBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        GlassEffectContainer(spacing: 16) {
-            HStack(spacing: 12) {
-                ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
-                             icon: "gyroscope", isOn: model.isFollowingDevice) {
-                    model.setFollowing(!model.isFollowingDevice)
-                }
-                .disabled(!model.motion.isAvailable)
-
-                ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
-                             icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
-                    model.setCamera(!model.showsCamera)
-                }
-
-                Spacer(minLength: 0)
-
-                GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
-                    Image(systemName: "gearshape").font(.title3)
-                }
-
-                GlassCircleButton(title: "Offline maps", action: { model.showDownloads = true }) {
-                    Image(systemName: "arrow.down.circle").font(.title3)
-                }
-
-                CompassButton()
+        HStack(spacing: 12) {
+            GlassEffectContainer(spacing: 16) {
+                controls
             }
-            .animation(.smooth, value: model.isFollowingDevice)
-            .animation(.smooth, value: model.showsCamera)
+            // Outside the container: its needle changes every frame while following the phone, and
+            // nothing that redraws at 60 Hz should share a glass container with the other buttons.
+            CompassButton()
         }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 12) {
+            ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
+                         icon: "gyroscope", isOn: model.isFollowingDevice) {
+                model.setFollowing(!model.isFollowingDevice)
+            }
+            .disabled(!model.motion.isAvailable)
+
+            ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
+                         icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
+                model.setCamera(!model.showsCamera)
+            }
+
+            Spacer(minLength: 0)
+
+            GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                Image(systemName: "gearshape").font(.title3)
+            }
+
+            GlassCircleButton(title: "Offline maps", action: { model.showDownloads = true }) {
+                Image(systemName: "arrow.down.circle").font(.title3)
+            }
+        }
+        .animation(.smooth, value: model.isFollowingDevice)
+        .animation(.smooth, value: model.showsCamera)
     }
 }
 
@@ -338,23 +345,36 @@ private struct ToggleButton: View {
     }
 }
 
-/// Needle pointing north on screen. Tap: look north (and stop following the phone).
+/// Compass button: tap to look north (and stop following the phone).
+///
+/// The button itself doesn't read the heading, so it isn't rebuilt on every motion update (60 Hz) and a tap
+/// isn't interrupted; only the needle inside redraws.
 private struct CompassButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let heading = model.heading
-        GlassCircleButton(title: "Compass, heading \(Int(heading.rounded())) degrees. Tap to face north.",
+        GlassCircleButton(title: "Compass. Tap to face north.",
                           action: { withAnimation(.smooth) { model.faceNorth() } }) {
-            ZStack {
-                Image(systemName: "location.north.fill")
-                    .font(.title3)
-                    .foregroundStyle(.red)
-                Text("N")
-                    .font(.system(size: 9, weight: .heavy))
-                    .offset(y: -19)
-            }
-            .rotationEffect(.degrees(-heading))
+            CompassNeedle()
         }
+    }
+}
+
+/// Needle pointing north on screen.
+private struct CompassNeedle: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let heading = model.heading
+        ZStack {
+            Image(systemName: "location.north.fill")
+                .font(.title3)
+                .foregroundStyle(.red)
+            Text("N")
+                .font(.system(size: 9, weight: .heavy))
+                .offset(y: -19)
+        }
+        .rotationEffect(.degrees(-heading))
+        .accessibilityValue("heading \(Int(heading.rounded())) degrees")
     }
 }
