@@ -55,6 +55,11 @@ def read_osm_peaks(path: Path | str, include_hills: bool = False) -> list[Peak]:
 
 GEOFABRIK_INDEX = "https://download.geofabrik.de/index-v1-nogeom.json"
 
+# Territories whose Geofabrik extract carries no ISO alpha-2 tag in the index, by extract id. Only used when the
+# id is in the index. (San Marino, Vatican City and Åland have no extract of their own: the Italy and Finland
+# extracts of the neighbours cover them.)
+GEOFABRIK_IDS = {"GG": "guernsey-jersey", "JE": "guernsey-jersey", "IM": "isle-of-man", "XK": "kosovo"}
+
 
 def geofabrik_pbf_urls(cc: str, cache_dir: Path) -> list[str]:
     """Geofabrik extract(s) for an ISO alpha-2 code, using Geofabrik's own index.
@@ -73,6 +78,8 @@ def geofabrik_pbf_urls(cc: str, cache_dir: Path) -> list[str]:
     features = json.loads(index.read_text())["features"]
     cc = cc.upper()
     hits = [f["properties"] for f in features if cc in (f["properties"].get("iso3166-1:alpha2") or [])]
+    if not hits and cc in GEOFABRIK_IDS:
+        hits = [f["properties"] for f in features if f["properties"].get("id") == GEOFABRIK_IDS[cc]]
     if not hits:
         return []
     ids = {h["id"] for h in hits}

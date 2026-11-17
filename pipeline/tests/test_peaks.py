@@ -238,3 +238,23 @@ def test_peak_db_roundtrip(tmp_path):
     (p,) = read_peak_db(db)
     assert (p.id, p.name, p.names, p.ele, p.dem_ele, p.qa, p.sources, p.prominence) == \
         ("wd:Q1374", "Matterhorn", {"it": "Cervino"}, 4478, 4330, ["alt_source"], ["osm", "wikidata"], 1031)
+
+
+def test_geofabrik_lookup_falls_back_to_extract_id(tmp_path):
+    import json
+
+    from peaker_pipeline.peaks import osm
+
+    index = tmp_path / "geofabrik" / "index-v1-nogeom.json"
+    index.parent.mkdir(parents=True)
+    feature = lambda id, parent, iso=None: {"properties": {
+        "id": id, "parent": parent, "urls": {"pbf": f"https://download.geofabrik.de/europe/{id}-latest.osm.pbf"},
+        **({"iso3166-1:alpha2": iso} if iso else {})}}
+    index.write_text(json.dumps({"features": [
+        feature("europe", None), feature("guernsey-jersey", "europe"), feature("isle-of-man", "europe"),
+        feature("france", "europe", ["FR"])]}))
+    assert osm.geofabrik_pbf_urls("je", tmp_path) == ["https://download.geofabrik.de/europe/guernsey-jersey-latest.osm.pbf"]
+    assert osm.geofabrik_pbf_urls("IM", tmp_path) == ["https://download.geofabrik.de/europe/isle-of-man-latest.osm.pbf"]
+    assert osm.geofabrik_pbf_urls("FR", tmp_path) == ["https://download.geofabrik.de/europe/france-latest.osm.pbf"]
+    assert osm.geofabrik_pbf_urls("XK", tmp_path) == []  # id not in this index
+    assert osm.geofabrik_pbf_urls("SM", tmp_path) == []
