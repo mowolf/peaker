@@ -13,7 +13,7 @@ struct PeakDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(peak.displayName(language: Locale.current.language.languageCode?.identifier))
+                        Text(peak.displayName(language: model.settings.peakLanguage))
                             .font(.largeTitle.bold())
                         if !otherNames.isEmpty {
                             Text(otherNames.joined(separator: " · "))
@@ -74,7 +74,7 @@ struct PeakDetailView: View {
     }
 
     private var otherNames: [String] {
-        let shown: String = visible.peak.displayName(language: Locale.current.language.languageCode?.identifier)
+        let shown: String = visible.peak.displayName(language: model.settings.peakLanguage)
         var seen: Set<String> = [shown]
         var candidates: [String] = [visible.peak.name]
         for language in ["local", "de", "fr", "it", "en"] {

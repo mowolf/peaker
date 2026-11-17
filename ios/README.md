@@ -31,9 +31,15 @@ peaker-pipeline bundle CH --dest ../ios/Peaker/Resources/BundledPacks/DEMO --bbo
 | path | what |
 |---|---|
 | `PeakerKit/` | Swift package with the platform-independent core: geo maths, `.pkt` tile decoder, horizon/ridge engine, camera projection, label layout, catalog models. `swift test` runs on macOS and Linux. |
-| `Peaker/App` | app entry, `AppModel` (state, horizon computation), settings |
-| `Peaker/Services` | GPS, Core Motion attitude, camera, tile loader, SQLite peak queries, pack downloads |
+| `Peaker/App` | app entry, `AppModel` (view state, sensors, modes), `HorizonStore` (background horizon computation, visible peaks, sun), settings, fixed viewpoints |
+| `Peaker/Services` | GPS, Core Motion attitude, camera, tile loader, SQLite peak queries, `PackStore` (installed packs, tile bookkeeping) and `PackDownloader` (networking, checksums) |
 | `Peaker/Views` | viewer (camera / touch mode), panorama canvas, compass, sheets |
 | `Peaker/Resources/BundledPacks` | packs shipped in the app, one folder each (built by `pipeline/`, `bundle` command) |
+
+Concurrency: UI state is on the main actor (`AppModel`, `AppSettings`, `PackStore`, `HorizonStore` and the
+sensor services). Heavy work runs off it: the horizon sweep and tile decoding in a detached task and the
+`TileLoader` actor, downloads and checksums in `PackDownloader`, and the capture session on the camera's own
+queue. Sensor callbacks arrive on the main queue and enter the main actor with `MainActor.assumeIsolated`
+(Core Location through a `@MainActor` delegate conformance).
 
 CI: `.github/workflows/ios.yml` builds and tests every change on macOS and uploads `master` to TestFlight.

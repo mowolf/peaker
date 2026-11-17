@@ -26,7 +26,8 @@ public struct Catalog: Sendable, Codable {
         public var bytes: [String: Int]
         public var tiles: [String: Int]
         public var peaks: Int
-        public var neighbours: [String]
+        /// Optional so an entry without it doesn't make the whole catalog unreadable.
+        public var neighbours: [String]?
         public var id: String { code }
     }
 

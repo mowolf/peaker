@@ -1,16 +1,58 @@
 import PeakerKit
 import SwiftUI
+import UIKit
 
 /// Draws the ridge lines and peak labels for the current camera pose, and handles touch navigation.
 struct PanoramaView: View {
     @Environment(AppModel.self) private var model
     @State private var dragStart: (yaw: Double, pitch: Double, heading: Double, pitchOffset: Double)?
     @State private var zoomStart: Double?
-    /// Rows used in the last frame, so labels stay put while the view moves (not observed: no redraws).
+    /// Label rows of the last frame and per-result label data (not observed: no redraws).
     @State private var labelMemory = LabelMemory()
 
+    /// A visible peak's label, prepared once per horizon result (or units/language change), not every frame.
+    struct LabelEntry {
+        var visible: VisiblePeak
+        var name: String
+        var detail: String
+        /// Label width for `LabelLayout` (text plus padding).
+        var width: Double
+        /// Priority before the per-frame stickiness bonus: important and close peaks first.
+        var priority: Double
+    }
+
+    @MainActor
     final class LabelMemory {
+        /// Rows used in the last frame, so labels stay put while the view moves.
         var rows: [String: Int] = [:]
+
+        struct EntriesKey: Equatable {
+            var result: Int
+            var units: UnitSystem
+            var language: String?
+        }
+        private var entriesKey: EntriesKey?
+        private var cachedEntries: [LabelEntry] = []
+
+        /// Label data for the current result, most important peak first.
+        func entries(for key: EntriesKey, make: () -> [LabelEntry]) -> [LabelEntry] {
+            if key != entriesKey {
+                cachedEntries = make().sorted { $0.visible.peak.importance > $1.visible.peak.importance }
+                entriesKey = key
+            }
+            return cachedEntries
+        }
+
+        private static let nameFont = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        private static let detailFont = UIFont.systemFont(ofSize: 11, weight: .regular)
+
+        /// Width of a label's text as drawn in `drawLabels` (name + " " + detail).
+        /// Character counts are far off for non-Latin scripts and wide letters.
+        static func textWidth(name: String, detail: String) -> Double {
+            let nameWidth = (name as NSString).size(withAttributes: [.font: nameFont]).width
+            let detailWidth = ((" " + detail) as NSString).size(withAttributes: [.font: detailFont]).width
+            return Double((nameWidth + detailWidth).rounded(.up))
+        }
     }
 
     var body: some View {
@@ -19,8 +61,8 @@ struct PanoramaView: View {
             let pose = model.cameraPose(size: size)
             let labels = layoutLabels(pose: pose, size: size)
             Canvas(rendersAsynchronously: false) { context, size in
-                if let horizon = model.horizon {
-                    if let sunDay = model.sunDay {
+                if let horizon = model.horizonStore.horizon {
+                    if let sunDay = model.horizonStore.sunDay {
                         drawSun(&context, day: sunDay, horizon: horizon, pose: pose, size: size)
                     }
                     if !cameraVisible {
@@ -137,8 +179,11 @@ struct PanoramaView: View {
         let camera = cameraVisible
         let gapLimit = horizon.settings.azimuthStep * 2.5
 
-        // Far ridges first so near ones draw on top.
-        for ridge in horizon.ridges.sorted(by: { $0.meanDistance > $1.meanDistance }) {
+        // Ridges come far-first, so near ones draw on top.
+        for ridge in horizon.ridges {
+            // Skip lines entirely outside the view without touching their points.
+            let range = ridge.azimuthRange
+            if abs(Geo.angleDifference(range.center, viewAz)) > range.halfWidth + maxOff { continue }
             var path = Path()
             var penDown = false
             var previousAz: Double?
@@ -302,43 +347,53 @@ struct PanoramaView: View {
         let zoom: Double = Swift.max(0.4, Swift.min(4.0, model.camera.fieldOfView / fieldOfView))
         let maxLabels: Int = Int((Double(density.maxLabels) * Swift.min(2.5, zoom)).rounded())
         let minImportance: Double = density.minImportance / zoom
-        let language = Locale.current.language.languageCode?.identifier
-        var byID: [String: (VisiblePeak, String, String)] = [:]
+        // Keep labels below the top bar (shorter in landscape); summits under it couldn't get a label anyway.
+        let topInset: Double = size.width > size.height ? 100 : 150
+        let entries = labelEntries()
         var candidates: [LabelLayout.Candidate] = []
+        var entryIndex: [String: Int] = [:]
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height)
-        for v in model.visiblePeaks where v.peak.importance >= minImportance {
-            let screenWidth = Double(size.width), screenHeight = Double(size.height)
+        let screenWidth = Double(size.width), screenHeight = Double(size.height)
+        for (i, e) in entries.enumerated() {
+            let v = e.visible
+            if v.peak.importance < minImportance { break }  // sorted by importance: the rest are smaller
             guard abs(Geo.angleDifference(v.azimuth, viewAz)) <= maxOff,
                   let s = pose.project(azimuth: v.azimuth, altitude: v.altitude),
-                  s.x > -20, s.x < screenWidth + 20, s.y > 80, s.y < screenHeight else { continue }
-            let name = v.peak.displayName(language: language)
-            var detailParts: [String] = []
-            if let elevation = v.peak.elevation {
-                detailParts.append(model.settings.elevation(elevation))
-            }
-            detailParts.append(model.settings.distance(v.distance))
-            let detail: String = detailParts.joined(separator: " · ")
-            // Rough text width (13 pt semibold + 11 pt detail) — good enough for collision checks.
-            let nameWidth: Double = Double(name.count) * 7.4
-            let detailWidth: Double = Double(detail.count) * 5.6
-            let width: Double = nameWidth + detailWidth + 22
-            byID[v.id] = (v, name, detail)
-            // Prefer important and close peaks.
-            let closeness: Double = 1 - min(1, v.distance / 100_000)
-            let priority: Double = v.peak.importance + 0.15 * closeness
-            candidates.append(.init(id: v.id, x: s.x, y: s.y, width: width, priority: priority))
+                  s.x > -20, s.x < screenWidth + 20, s.y > topInset, s.y < screenHeight else { continue }
+            entryIndex[v.id] = i
+            candidates.append(.init(id: v.id, x: s.x, y: s.y, width: e.width, priority: e.priority))
         }
-        // Keep labels below the top bar (shorter in landscape).
-        let topInset: Double = size.width > size.height ? 100 : 150
         let placed = LabelLayout.place(candidates, rowHeight: 26, rows: 5, gap: 18, minY: topInset,
                                        maxX: Double(size.width) - 4, maxLabels: maxLabels,
                                        previous: labelMemory.rows)
-        labelMemory.rows = Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.row) })
+        labelMemory.rows = Dictionary(placed.map { ($0.id, $0.row) }, uniquingKeysWith: { first, _ in first })
         return placed.compactMap { p in
-            guard let entry = byID[p.id] else { return nil }
-            return PlacedLabel(peak: entry.0, name: entry.1, detail: entry.2, summit: CGPoint(x: p.summitX, y: p.summitY),
+            guard let i = entryIndex[p.id] else { return nil }
+            let e = entries[i]
+            return PlacedLabel(peak: e.visible, name: e.name, detail: e.detail, summit: CGPoint(x: p.summitX, y: p.summitY),
                                frame: CGRect(x: p.x, y: p.y + 2, width: p.width, height: p.height - 4))
+        }
+    }
+
+    /// Names, detail texts, measured widths and priorities of the visible peaks: built once per result.
+    private func labelEntries() -> [LabelEntry] {
+        let settings = model.settings
+        let store = model.horizonStore
+        let key = LabelMemory.EntriesKey(result: store.resultID, units: settings.units, language: settings.peakLanguage)
+        return labelMemory.entries(for: key) {
+            store.visiblePeaks.map { v in
+                let name = v.peak.displayName(language: key.language)
+                var detailParts: [String] = []
+                if let elevation = v.peak.elevation { detailParts.append(settings.elevation(elevation)) }
+                detailParts.append(settings.distance(v.distance))
+                let detail = detailParts.joined(separator: " · ")
+                // The text starts 9 pt into the frame, which is `width + 8` wide (LabelLayout).
+                let width = LabelMemory.textWidth(name: name, detail: detail) + 10
+                let closeness = 1 - min(1, v.distance / 100_000)
+                return LabelEntry(visible: v, name: name, detail: detail, width: width,
+                                  priority: v.peak.importance + 0.15 * closeness)
+            }
         }
     }
 }

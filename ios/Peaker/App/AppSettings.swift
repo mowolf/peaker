@@ -16,6 +16,7 @@ enum LabelDensity: String, CaseIterable, Identifiable {
 }
 
 /// User settings, persisted in UserDefaults.
+@MainActor
 @Observable
 final class AppSettings {
     private let defaults = UserDefaults.standard
@@ -34,6 +35,9 @@ final class AppSettings {
         labelDensity = LabelDensity(rawValue: defaults.string(forKey: "labelDensity") ?? "") ?? .normal
         fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
     }
+
+    /// Language for peak names: the device's language (OSM/Wikidata `name:<code>`).
+    var peakLanguage: String? { Locale.current.language.languageCode?.identifier }
 
     func elevation(_ metres: Double) -> String {
         units == .metric

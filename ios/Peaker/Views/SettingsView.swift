@@ -35,7 +35,10 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker("Viewpoint", selection: $settings.fixedViewpointID) {
+                    // Through `choose`, like the viewpoint menu: turns the view towards the famous view, or
+                    // starts GPS for "My location".
+                    Picker("Viewpoint", selection: Binding(get: { model.settings.fixedViewpointID },
+                                                           set: { model.choose(Viewpoint.with(id: $0)) })) {
                         Text("My location (GPS)").tag("")
                         ForEach(Viewpoint.all) { v in
                             Text("\(v.name) · \(v.region)").tag(v.id)

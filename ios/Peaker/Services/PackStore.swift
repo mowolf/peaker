@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Observation
 import PeakerKit
@@ -18,6 +17,13 @@ struct InstalledPack: Codable, Hashable, Identifiable {
     /// High-detail (30 m) tiles of the pack, if it has them. `tiles` are the 90 m ones.
     var tiles30: [String]?
     var id: String { isBundled ? "bundled-\(code)" : code }
+
+    /// Tile names per resolution ("90", "30").
+    var tilesByResolution: [String: Set<String>] {
+        var out: [String: Set<String>] = ["90": Set(tiles)]
+        if let tiles30, !tiles30.isEmpty { out["30"] = Set(tiles30) }
+        return out
+    }
 }
 
 /// Everything the background horizon computation needs, captured on the main actor.
@@ -36,20 +42,11 @@ struct DownloadState: Equatable {
     var fraction: Double { bytesTotal > 0 ? Double(bytesDone) / Double(bytesTotal) : 0 }
 }
 
-enum PackError: LocalizedError {
-    case noServer, badResponse(Int), checksumMismatch(String), decompressionFailed
-
-    var errorDescription: String? {
-        switch self {
-        case .noServer: "No download server is configured for this build."
-        case .badResponse(let code): "The server answered with HTTP \(code)."
-        case .checksumMismatch(let file): "\(file) was damaged during download. Please try again."
-        case .decompressionFailed: "The peak database could not be unpacked."
-        }
-    }
-}
-
-/// Offline packs: the bundled demo, downloaded countries, the catalog, and downloads.
+/// Offline packs: the bundled ones, downloaded countries, the catalog, and downloads.
+///
+/// Downloaded tiles live in one shared store (`tiles/<resolution>/<name>.pkt`), used by every pack that
+/// lists them. `TileLedger` decides what may be deleted: a tile stays while an installed pack or a running
+/// download needs it. Files nobody uses (e.g. from a cancelled download) are removed at launch.
 @MainActor
 @Observable
 final class PackStore {
@@ -63,14 +60,20 @@ final class PackStore {
     /// Bumped whenever installed data changes, so the viewer knows to recompute.
     private(set) var version = 0
 
+    /// Tiles each running download needs (by pack code), so removing another pack can't delete them.
+    @ObservationIgnored private var reserved: [String: [String: Set<String>]] = [:]
+    /// SHA-256 of every stored tile file, per resolution: tells an outdated tile from a current one.
+    @ObservationIgnored private var tileChecksums: [String: [String: String]] = [:]
+
+    private static let resolutions = ["90", "30"]
     private let root: URL
-    private var tilesDir: URL { tilesDir("90") }
     private func tilesDir(_ resolution: String) -> URL {
         root.appendingPathComponent("tiles/\(resolution)", isDirectory: true)
     }
     private var peaksDir: URL { root.appendingPathComponent("peaks", isDirectory: true) }
     private var installedFile: URL { root.appendingPathComponent("installed.json") }
     private var catalogFile: URL { root.appendingPathComponent("catalog.json") }
+    private var checksumsFile: URL { root.appendingPathComponent("tile-checksums.json") }
     /// Packs shipped inside the app: one folder per pack with manifest.json, tiles/90/*.pkt, peaks.sqlite.
     private let bundledRoot = Bundle.main.url(forResource: "BundledPacks", withExtension: nil)
 
@@ -81,8 +84,9 @@ final class PackStore {
 
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         root = support.appendingPathComponent("Packs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tilesDir("90"), withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: tilesDir("30"), withIntermediateDirectories: true)
+        for resolution in Self.resolutions {
+            try? FileManager.default.createDirectory(at: tilesDir(resolution), withIntermediateDirectories: true)
+        }
         try? FileManager.default.createDirectory(at: peaksDir, withIntermediateDirectories: true)
         // Re-downloadable data: keep it out of iCloud backups.
         var values = URLResourceValues()
@@ -98,6 +102,11 @@ final class PackStore {
         if let data = try? Data(contentsOf: catalogFile) {
             catalog = try? Catalog.decode(data)
         }
+        if let data = try? Data(contentsOf: checksumsFile),
+           let sums = try? JSONDecoder().decode([String: [String: String]].self, from: data) {
+            tileChecksums = sums
+        }
+        removeUnusedTiles()
     }
 
     private func loadBundledPacks() -> [InstalledPack] {
@@ -134,7 +143,7 @@ final class PackStore {
                 if pack.isBundled {
                     if files[id] == nil, let url = bundledURL(pack, "tiles/90/\(name).pkt") { files[id] = url }
                 } else {
-                    files[id] = tilesDir.appendingPathComponent("\(name).pkt")  // downloaded tiles win
+                    files[id] = tilesDir("90").appendingPathComponent("\(name).pkt")  // downloaded tiles win
                 }
             }
             for name in pack.tiles30 ?? [] {
@@ -174,14 +183,54 @@ final class PackStore {
         isLoadingCatalog = true
         defer { isLoadingCatalog = false }
         do {
-            let data = try await Self.fetch(baseURL.appendingPathComponent("v1/catalog.json"))
-            catalog = try Catalog.decode(data)
+            let data = try await PackDownloader.fetch(baseURL.appendingPathComponent("v1/catalog.json"))
+            let fresh = try Catalog.decode(data)
+            let oldLand: [String: String]? = catalog?.landTiles
+            catalog = fresh
             catalogError = nil
             try? data.write(to: catalogFile, options: .atomic)
-            version += 1  // land tiles may have changed
+            // Only the land tiles affect the terrain (sea vs. missing data): recompute only if they changed,
+            // not on every launch.
+            if oldLand != fresh.landTiles { version += 1 }
         } catch {
             catalogError = error.localizedDescription
         }
+    }
+
+    // MARK: - Tile bookkeeping
+
+    /// Which downloaded pack owns which tiles, plus the tiles running downloads need.
+    private var ledger: TileLedger {
+        var ledger = TileLedger()
+        for pack in installed where !pack.isBundled {
+            ledger.installed[pack.code] = pack.tilesByResolution
+        }
+        ledger.reserved = reserved
+        return ledger
+    }
+
+    private func deleteTiles(_ tiles: [String: Set<String>]) {
+        for (resolution, names) in tiles {
+            for name in names {
+                try? FileManager.default.removeItem(at: tilesDir(resolution).appendingPathComponent("\(name).pkt"))
+                tileChecksums[resolution]?[name] = nil
+            }
+        }
+    }
+
+    /// Delete tile files no installed pack or running download uses (left by an interrupted download, or by
+    /// a pack whose new version dropped tiles).
+    private func removeUnusedTiles() {
+        var onDisk: [String: Set<String>] = [:]
+        for resolution in Self.resolutions {
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: tilesDir(resolution).path)) ?? []
+            let names = Set(files.filter { $0.hasSuffix(".pkt") }.map { String($0.dropLast(4)) })
+            onDisk[resolution] = names
+            // Forget checksums of files that are gone.
+            tileChecksums[resolution] = tileChecksums[resolution]?.filter { names.contains($0.key) }
+        }
+        deleteTiles(ledger.orphans(onDisk: onDisk))
+        saveChecksums()
     }
 
     // MARK: - Install / remove
@@ -197,29 +246,38 @@ final class PackStore {
             finishInstall(pack)
         } catch {
             downloads[entry.code]?.error = error.localizedDescription
+            // Tiles fetched so far stay on disk (with their checksums), so trying again right away resumes.
+            // Unused, they are removed at the next launch or after the next completed install.
+            reserved[entry.code] = nil
+            saveChecksums()
         }
     }
 
     private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL) async throws -> InstalledPack {
-        let manifestData = try await Self.fetch(v1.appendingPathComponent(entry.manifest))
+        let manifestData = try await PackDownloader.fetch(v1.appendingPathComponent(entry.manifest))
         let manifest = try PackManifest.decode(manifestData)
         let tiles = manifest.tiles["90"] ?? []
         let tiles30 = manifest.tiles["30"] ?? []
-        let missing = missingTiles(tiles, resolution: "90")
-        let missing30 = missingTiles(tiles30, resolution: "30")
+        // Reserve every tile of the pack, including ones already on disk: removing another pack meanwhile
+        // must not delete them.
+        reserved[entry.code] = ["90": Set(tiles.map(\.name)), "30": Set(tiles30.map(\.name))]
+
+        let needed90 = await outdatedTiles(tiles, resolution: "90")
+        let needed30 = await outdatedTiles(tiles30, resolution: "30")
         var total = manifest.peaks.bytes
-        for t in missing + missing30 { total += t.bytes }
+        for t in needed90 + needed30 { total += t.bytes }
         downloads[entry.code]?.bytesTotal = total
 
         let code = entry.code
         // 90 m first: enough to show the view; then the high-detail 30 m tiles.
-        for (resolution, list) in [("90", missing), ("30", missing30)] where !list.isEmpty {
-            try await Self.downloadTiles(list, resolution: resolution, from: v1, to: tilesDir(resolution)) { [weak self] bytes in
-                await self?.addProgress(code, bytes: bytes)
+        for (resolution, list) in [("90", needed90), ("30", needed30)] where !list.isEmpty {
+            try await PackDownloader.downloadTiles(list, resolution: resolution, from: v1,
+                                                   to: tilesDir(resolution)) { [weak self] tile in
+                await self?.tileStored(tile, resolution: resolution, pack: code)
             }
         }
-        let sqliteBytes = try await Self.downloadPeakDatabase(manifest.peaks, from: v1,
-                                                              to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
+        let sqliteBytes = try await PackDownloader.downloadPeakDatabase(
+            manifest.peaks, from: v1, to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
         addProgress(code, bytes: manifest.peaks.bytes)
 
         var bytes = sqliteBytes
@@ -230,11 +288,21 @@ final class PackStore {
                              tiles30: tiles30.isEmpty ? nil : tiles30.map(\.name))
     }
 
-    private func missingTiles(_ tiles: [PackManifest.TileFile], resolution: String) -> [PackManifest.TileFile] {
+    /// Tiles not on disk in the manifest's version. Hashing unknown files runs off the main actor.
+    private func outdatedTiles(_ tiles: [PackManifest.TileFile], resolution: String) async -> [PackManifest.TileFile] {
+        guard !tiles.isEmpty else { return [] }
         let dir = tilesDir(resolution)
-        return tiles.filter { t in
-            !FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(t.name).pkt").path)
-        }
+        let known = tileChecksums[resolution] ?? [:]
+        let result = await Task.detached(priority: .userInitiated) {
+            PackDownloader.outdatedTiles(tiles, in: dir, known: known)
+        }.value
+        for (name, sha) in result.hashed { tileChecksums[resolution, default: [:]][name] = sha }
+        return result.outdated
+    }
+
+    private func tileStored(_ tile: PackManifest.TileFile, resolution: String, pack code: String) {
+        tileChecksums[resolution, default: [:]][tile.name] = tile.sha256
+        addProgress(code, bytes: tile.bytes)
     }
 
     private func addProgress(_ code: String, bytes: Int) {
@@ -244,24 +312,20 @@ final class PackStore {
     private func finishInstall(_ pack: InstalledPack) {
         installed.removeAll { $0.code == pack.code && !$0.isBundled }
         installed.append(pack)
+        reserved[pack.code] = nil
         saveInstalled()
         downloads[pack.code] = nil
+        removeUnusedTiles()  // e.g. tiles an older version of this pack had
         version += 1
     }
 
     func remove(_ code: String) {
         guard let pack = installed.first(where: { $0.code == code && !$0.isBundled }) else { return }
+        deleteTiles(ledger.removable(after: code))
         installed.removeAll { $0.code == code && !$0.isBundled }
-        let others = installed.filter { !$0.isBundled }
-        let stillUsed = Set(others.flatMap(\.tiles)), stillUsed30 = Set(others.flatMap { $0.tiles30 ?? [] })
-        for name in pack.tiles where !stillUsed.contains(name) {
-            try? FileManager.default.removeItem(at: tilesDir("90").appendingPathComponent("\(name).pkt"))
-        }
-        for name in pack.tiles30 ?? [] where !stillUsed30.contains(name) {
-            try? FileManager.default.removeItem(at: tilesDir("30").appendingPathComponent("\(name).pkt"))
-        }
         try? FileManager.default.removeItem(at: peaksDir.appendingPathComponent(pack.peaksFile))
         saveInstalled()
+        saveChecksums()
         version += 1
     }
 
@@ -274,69 +338,9 @@ final class PackStore {
         }
     }
 
-    // MARK: - Networking
-
-    nonisolated private static func fetch(_ url: URL) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw PackError.badResponse(http.statusCode)
+    private func saveChecksums() {
+        if let data = try? JSONEncoder().encode(tileChecksums) {
+            try? data.write(to: checksumsFile, options: .atomic)
         }
-        return data
-    }
-
-    /// Download tiles, 4 at a time, reporting each finished tile's size.
-    nonisolated private static func downloadTiles(_ tiles: [PackManifest.TileFile], resolution: String,
-                                                  from v1: URL, to dir: URL,
-                                                  progress: @escaping @Sendable (Int) async -> Void) async throws {
-        try await withThrowingTaskGroup(of: Int.self) { group in
-            var pending = tiles.makeIterator()
-            for _ in 0..<4 {
-                guard let t = pending.next() else { break }
-                group.addTask { try await downloadTile(t, resolution: resolution, from: v1, to: dir) }
-            }
-            while let bytes = try await group.next() {
-                await progress(bytes)
-                if let t = pending.next() {
-                    group.addTask { try await downloadTile(t, resolution: resolution, from: v1, to: dir) }
-                }
-            }
-        }
-    }
-
-    /// Download, verify and inflate the peak database. Returns the size of the SQLite file.
-    nonisolated private static func downloadPeakDatabase(_ file: PackManifest.PeaksFile, from v1: URL,
-                                                         to destination: URL) async throws -> Int {
-        let packed = try await fetch(v1.appendingPathComponent(file.path))
-        guard sha256(packed) == file.sha256 else { throw PackError.checksumMismatch("Peak database") }
-        guard let inflated = try? (packed as NSData).decompressed(using: .zlib) else {
-            throw PackError.decompressionFailed
-        }
-        let sqlite = inflated as Data
-        try sqlite.write(to: destination, options: .atomic)
-        return sqlite.count
-    }
-
-    nonisolated private static func downloadTile(_ t: PackManifest.TileFile, resolution: String, from v1: URL,
-                                                 to dir: URL) async throws -> Int {
-        try await download(v1.appendingPathComponent("tiles/\(resolution)/\(t.name).pkt"), sha256: t.sha256,
-                           to: dir.appendingPathComponent("\(t.name).pkt"))
-    }
-
-    /// Download to a temporary file, verify the checksum, then move into place. Returns the byte count.
-    nonisolated private static func download(_ url: URL, sha256 expected: String, to destination: URL) async throws -> Int {
-        let (tmp, response) = try await URLSession.shared.download(from: url)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw PackError.badResponse(http.statusCode)
-        }
-        let data = try Data(contentsOf: tmp, options: .mappedIfSafe)
-        guard sha256(data) == expected else { throw PackError.checksumMismatch(url.lastPathComponent) }
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: tmp, to: destination)
-        return data.count
-    }
-
-    nonisolated private static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }

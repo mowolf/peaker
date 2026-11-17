@@ -31,6 +31,9 @@ struct ViewerView: View {
         .sheet(isPresented: $model.showDownloads) {
             DownloadsView()
         }
+        .sheet(isPresented: $model.showSettings) {
+            SettingsView()
+        }
         // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
         .onAppear { model.updateInterfaceOrientation() }
@@ -38,10 +41,16 @@ struct ViewerView: View {
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                model.refreshSun()
+                model.horizonStore.refreshSun()
             }
         }
-        .onChange(of: model.settings.maxDistanceKm) { Task { await model.recompute() } }
+        // The view-distance slider and eye-height stepper change in steps: wait until they rest before the
+        // (expensive) recompute. Cancelled and restarted on every change.
+        .task(id: [model.settings.maxDistanceKm, model.settings.eyeHeight]) {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            await model.recompute()
+        }
         .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
         .onChange(of: model.packs.version) { Task { await model.recompute() } }
         // Pause camera and sensors in the background (battery), resume as they were.
@@ -90,7 +99,7 @@ private struct TopBar: View {
                 HStack(spacing: 8) {
                     ViewpointChip()
                         .glassEffectID("viewpoint", in: glass)
-                    if model.isComputing {
+                    if model.horizonStore.isComputing {
                         ProgressView()
                             .controlSize(.small)
                             .padding(10)
@@ -99,7 +108,7 @@ private struct TopBar: View {
                             .transition(.blurReplace)
                     }
                 }
-                .animation(.smooth, value: model.isComputing)
+                .animation(.smooth, value: model.horizonStore.isComputing)
             }
         }
     }
@@ -170,9 +179,9 @@ private struct StatusBanner: View {
 
     var body: some View {
         Group {
-            if model.noDataHere {
+            if model.horizonStore.noDataHere {
                 banner(icon: "arrow.down.circle", text: "No offline data here yet. Download this country with the ↓ button.")
-            } else if let h = model.horizon, h.missingFraction > 0.25 {
+            } else if let h = model.horizonStore.horizon, h.missingFraction > 0.25 {
                 banner(icon: "square.dashed", text: "Part of the view is outside the offline data.")
             } else if model.isFollowingDevice && model.motion.isCompassUncertain {
                 banner(icon: "exclamationmark.triangle", text: "Compass is inaccurate. Move the phone in a figure 8.")
@@ -181,7 +190,7 @@ private struct StatusBanner: View {
             }
         }
         .transition(.move(edge: .top).combined(with: .opacity))
-        .animation(.smooth, value: model.noDataHere)
+        .animation(.smooth, value: model.horizonStore.noDataHere)
     }
 
     private func banner(icon: String, text: String) -> some View {
@@ -222,7 +231,7 @@ private struct CalibrationHint: View {
 
 // MARK: - Bottom controls
 
-/// Gyro (automatic direction) and camera toggles on the left, compass on the right.
+/// Gyro (automatic direction) and camera toggles on the left; settings, downloads and compass on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
     @Namespace private var glass
@@ -245,15 +254,11 @@ private struct ControlBar: View {
 
                 Spacer(minLength: 0)
 
-                Button { model.showDownloads = true } label: {
-                    Label("Offline maps", systemImage: "arrow.down.circle")
-                        .labelStyle(.iconOnly)
-                        .font(.title3)
-                        .frame(width: 52, height: 52)
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .glassEffectID("downloads", in: glass)
+                IconButton(title: "Settings", icon: "gearshape") { model.showSettings = true }
+                    .glassEffectID("settings", in: glass)
+
+                IconButton(title: "Offline maps", icon: "arrow.down.circle") { model.showDownloads = true }
+                    .glassEffectID("downloads", in: glass)
 
                 CompassButton()
                     .glassEffectID("compass-button", in: glass)
@@ -261,6 +266,24 @@ private struct ControlBar: View {
             .animation(.smooth, value: model.isFollowingDevice)
             .animation(.smooth, value: model.showsCamera)
         }
+    }
+}
+
+/// Round glass button with an icon (title for VoiceOver).
+private struct IconButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .frame(width: 52, height: 52)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
     }
 }
 
@@ -289,7 +312,7 @@ private struct CompassButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let heading: Double = model.cameraPose(size: CGSize(width: 400, height: 800)).azimuth
+        let heading = model.heading
         Button {
             withAnimation(.smooth) { model.faceNorth() }
         } label: {

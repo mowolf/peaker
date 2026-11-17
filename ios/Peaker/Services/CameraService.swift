@@ -7,16 +7,37 @@ import Observation
 /// Switching the camera on should feel instant, so the session is configured ahead of time
 /// (`prepare()`, at launch when access was already granted) and only started/stopped on toggle.
 /// `isRunning` turns true when frames flow, so the UI can fade the preview in instead of showing black.
+///
+/// Concurrency: the observable state lives on the main actor; the capture session and device are only
+/// touched on `Capture.queue` (configuration, start/stop and zoom block, so they must stay off the main thread).
+@MainActor
 @Observable
 final class CameraService {
-    let session = AVCaptureSession()
-    private let queue = DispatchQueue(label: "peaker.camera")
-    @ObservationIgnored private var configured = false
-    @ObservationIgnored private var device: AVCaptureDevice?
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    /// Called on the main queue once the real field of view and zoom range are known.
-    @ObservationIgnored var onConfigured: (() -> Void)?
+    /// AVFoundation objects confined to `queue`, Apple's recommended pattern for capture sessions.
+    /// `@unchecked Sendable` because the confinement is by convention: every use goes through `queue`
+    /// (except handing `session` to the preview layer, which AVFoundation allows from the main thread).
+    private final class Capture: @unchecked Sendable {
+        let session = AVCaptureSession()
+        let queue = DispatchQueue(label: "peaker.camera")
+        /// Set and used on `queue` only.
+        var device: AVCaptureDevice?
+        var configured = false
+    }
 
+    /// Removes the notification observers when the service goes away (no main-actor deinit needed).
+    private final class Observers: @unchecked Sendable {
+        var tokens: [any NSObjectProtocol] = []
+        deinit { tokens.forEach(NotificationCenter.default.removeObserver) }
+    }
+
+    @ObservationIgnored private let capture = Capture()
+    @ObservationIgnored private let observers = Observers()
+    /// Called once the real field of view and zoom range are known.
+    @ObservationIgnored var onConfigured: (() -> Void)?
+    @ObservationIgnored private var configurationRequested = false
+
+    /// The preview layer's session.
+    var session: AVCaptureSession { capture.session }
     /// Field of view across the sensor's long side (degrees), i.e. the screen height in portrait.
     private(set) var fieldOfView: Double = 65
     /// Largest useful zoom factor of the back camera.
@@ -31,15 +52,15 @@ final class CameraService {
     init() {
         let center = NotificationCenter.default
         for name in [AVCaptureSession.didStartRunningNotification, AVCaptureSession.didStopRunningNotification] {
-            observers.append(center.addObserver(forName: name, object: session, queue: .main) { [weak self] _ in
-                guard let self else { return }
-                self.isRunning = self.session.isRunning
+            let started = name == AVCaptureSession.didStartRunningNotification
+            observers.tokens.append(center.addObserver(forName: name, object: capture.session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setRunning(started) }
             })
         }
     }
 
-    deinit {
-        observers.forEach(NotificationCenter.default.removeObserver)
+    private func setRunning(_ running: Bool) {
+        if isRunning != running { isRunning = running }
     }
 
     /// Configure the session in the background without starting it (no camera indicator, no battery use).
@@ -55,11 +76,10 @@ final class CameraService {
             authorization = .authorized
             configureIfNeeded(thenStart: true)
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                DispatchQueue.main.async {
-                    self.authorization = AVCaptureDevice.authorizationStatus(for: .video)
-                    if granted { self.configureIfNeeded(thenStart: true) }
-                }
+            Task {
+                let granted = await AVCaptureDevice.requestAccess(for: .video)
+                authorization = AVCaptureDevice.authorizationStatus(for: .video)
+                if granted { configureIfNeeded(thenStart: true) }
             }
         default:
             authorization = AVCaptureDevice.authorizationStatus(for: .video)
@@ -67,50 +87,53 @@ final class CameraService {
     }
 
     func stop() {
-        let session = session
-        queue.async {
-            if session.isRunning { session.stopRunning() }
+        let capture = capture
+        capture.queue.async {
+            if capture.session.isRunning { capture.session.stopRunning() }
         }
     }
 
     /// Optical/digital zoom of the preview (1 = widest). The overlay uses the same factor.
     func setZoom(_ factor: Double) {
-        guard let device else { return }
         let clamped = CGFloat(max(1, min(factor, maxZoom)))
-        queue.async {
-            guard (try? device.lockForConfiguration()) != nil else { return }
+        let capture = capture
+        capture.queue.async {
+            guard let device = capture.device, (try? device.lockForConfiguration()) != nil else { return }
             device.videoZoomFactor = clamped
             device.unlockForConfiguration()
         }
     }
 
     private func configureIfNeeded(thenStart start: Bool) {
-        let session = session
-        let needsConfig = !configured
-        configured = true
-        queue.async {
-            if needsConfig {
-                session.beginConfiguration()
-                session.sessionPreset = .high
-                var fov: Double?
-                var zoomLimit: Double?
-                var chosen: AVCaptureDevice?
-                if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-                   let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) {
-                    session.addInput(input)
-                    fov = Double(device.activeFormat.videoFieldOfView)
-                    zoomLimit = min(6, Double(device.maxAvailableVideoZoomFactor))
-                    chosen = device
-                }
-                session.commitConfiguration()
-                DispatchQueue.main.async {
-                    if let fov, fov > 10 { self.fieldOfView = fov }
-                    self.maxZoom = zoomLimit ?? 1
-                    self.device = chosen
-                    self.onConfigured?()
-                }
+        let needsConfig = !configurationRequested
+        configurationRequested = true
+        let capture = capture
+        capture.queue.async { [weak self] in
+            if needsConfig, !capture.configured {
+                capture.configured = true
+                let lens = Self.configure(capture)
+                Task { @MainActor in self?.didConfigure(fieldOfView: lens?.fieldOfView, maxZoom: lens?.maxZoom) }
             }
-            if start, !session.isRunning { session.startRunning() }
+            if start, !capture.session.isRunning { capture.session.startRunning() }
         }
+    }
+
+    /// Add the back wide-angle camera to the session. Runs on the capture queue.
+    nonisolated private static func configure(_ capture: Capture) -> (fieldOfView: Double, maxZoom: Double)? {
+        let session = capture.session
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        session.sessionPreset = .high
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+              let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else { return nil }
+        session.addInput(input)
+        capture.device = device
+        return (Double(device.activeFormat.videoFieldOfView), min(6, Double(device.maxAvailableVideoZoomFactor)))
+    }
+
+    private func didConfigure(fieldOfView fov: Double?, maxZoom zoom: Double?) {
+        if let fov, fov > 10 { fieldOfView = fov }
+        maxZoom = zoom ?? 1
+        onConfigured?()
     }
 }

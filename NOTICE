@@ -1,0 +1,15 @@
+Required Notice: Copyright (c) 2026 Moritz Wolf (https://github.com/mowolf/peaker)
+
+Peaker's source code is licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE.md):
+free for personal and other noncommercial use; commercial use needs a separate license from the copyright
+holder.
+
+Third-party data is not covered by that license and keeps its own terms, including the elevation tiles and
+peak databases in ios/Peaker/Resources/BundledPacks and those built by pipeline/:
+
+- Copernicus DEM: © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under
+  COPERNICUS by the European Union and ESA; all rights reserved
+- OpenStreetMap data: © OpenStreetMap contributors, Open Database License (ODbL) 1.0
+- Wikidata: CC0 1.0
+- GeoNames: CC BY 4.0
+- Natural Earth: public domain

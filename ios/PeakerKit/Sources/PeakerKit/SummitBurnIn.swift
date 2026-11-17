@@ -23,10 +23,16 @@ public enum SummitBurnIn {
 
     /// Returns the tile with summits burned in (or the same tile if nothing changed).
     public static func apply(to tile: ElevationTile, summits: [Summit]) -> ElevationTile {
+        var out = tile
+        apply(summits, to: &out)
+        return out
+    }
+
+    /// Burn the summits into the tile in place: no copy of the heights when the tile is the only owner.
+    public static func apply(_ summits: [Summit], to tile: inout ElevationTile) {
         let rows = tile.rows, cols = tile.cols
         let south = Double(tile.id.lat), west = Double(tile.id.lon)
-        var heights = tile.heights
-        var changed = false
+        var highest = tile.maxHeight
         let metresPerRow = 111_320.0 / Double(rows - 1)
 
         for s in summits {
@@ -44,7 +50,7 @@ public enum SummitBurnIn {
             var bestDistance = Double.infinity
             for rr in max(0, Int(floor(r)) - 1)...min(rows - 1, Int(ceil(r)) + 1) {
                 for cc in max(0, Int(floor(c)) - 1)...min(cols - 1, Int(ceil(c)) + 1) {
-                    let h = heights[rr * cols + cc]
+                    let h = tile.heights[rr * cols + cc]
                     let dy = (Double(rr) - r) * metresPerRow, dx = (Double(cc) - c) * metresPerCol
                     let distance = dx * dx + dy * dy
                     if h > best || (h == best && distance < bestDistance) {
@@ -67,13 +73,14 @@ public enum SummitBurnIn {
                     let x = Double(cc - bestC) * metresPerCol
                     let target = s.elevation - slope * (x * x + y * y).squareRoot()
                     let i = rr * cols + cc
-                    if target > Double(heights[i]) {
-                        heights[i] = Int16(clamping: Int(target.rounded()))
-                        changed = true
+                    if target > Double(tile.heights[i]) {
+                        let raised = Int16(clamping: Int(target.rounded()))
+                        tile.heights[i] = raised
+                        highest = max(highest, raised)
                     }
                 }
             }
         }
-        return changed ? ElevationTile(id: tile.id, rows: rows, cols: cols, heights: heights) : tile
+        tile.maxHeight = highest
     }
 }

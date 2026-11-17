@@ -3,9 +3,13 @@ import Foundation
 import Observation
 
 /// GPS position. The horizon is computed from the DEM height at this position, not GPS altitude.
+///
+/// Main actor: the manager is created on the main thread, so Core Location calls the delegate there too.
+/// The delegate conformance is isolated to the main actor (Swift 6.2), so no hops are needed.
+@MainActor
 @Observable
-final class LocationService: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
+final class LocationService: NSObject {
+    @ObservationIgnored private let manager = CLLocationManager()
     private(set) var location: CLLocation?
     private(set) var authorization: CLAuthorizationStatus = .notDetermined
     @ObservationIgnored var onUpdate: ((CLLocation) -> Void)?
@@ -34,10 +38,13 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         manager.stopUpdatingLocation()
         manager.startUpdatingLocation()
     }
+}
 
+extension LocationService: @MainActor CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        authorization = manager.authorizationStatus
-        if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
+        let status = manager.authorizationStatus
+        if authorization != status { authorization = status }
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
             manager.startUpdatingLocation()
         }
     }
@@ -48,5 +55,5 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         onUpdate?(last)
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {}
 }

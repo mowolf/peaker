@@ -13,6 +13,9 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
+    # Full data-race checking (as warnings in Swift 5 mode). Services, stores and AppModel also build
+    # cleanly in Swift 6 mode; switch SWIFT_VERSION to 6.0 once an Xcode build shows no warnings.
+    SWIFT_STRICT_CONCURRENCY: complete
     CODE_SIGN_STYLE: Automatic
     # Country packs (catalog at <url>/v1/catalog.json). Public GitHub repo mowolf/height-data;
     # CI can override it with the repository variable PEAKER_DATA_URL.

@@ -49,6 +49,43 @@ If export fails with a signing error (e.g. the key lacks the Admin role, or the 
 certificates disabled), the fallback is the classic setup: a distribution certificate `.p12` plus an App Store
 provisioning profile as secrets, imported into a temporary keychain. Ask and we'll switch the workflow.
 
+## Building without GitHub Actions minutes
+
+The private repo's included macOS minutes run out quickly (macOS minutes count 10×). Options:
+
+- **Make the repository public.** Standard GitHub-hosted runners, macOS included, are free for public
+  repositories, so all three workflows run unchanged (TestFlight included). Secrets stay secret: they are not
+  shown in logs and not given to pull requests from forks. Before switching, decide on a licence (without a
+  `LICENSE` file the code is visible but all rights reserved).
+- **Xcode Cloud** (keeps the repo private): 25 compute hours a month are included in the Apple Developer
+  Program. It builds, tests and uploads to TestFlight with Apple-managed signing (no API key secrets needed).
+- **Self-hosted runner** on your own Mac: jobs there don't use Actions minutes. Register the Mac under
+  Settings → Actions → Runners and set `runs-on: self-hosted` in `ios.yml`.
+
+### Xcode Cloud setup
+
+The project file isn't committed (XcodeGen), so `ios/ci_scripts/ci_post_clone.sh` installs XcodeGen and
+generates `ios/Peaker.xcodeproj` after every clone, before Xcode Cloud looks for the project.
+
+One-time, on a Mac with Xcode 26 (workflows can only be created from Xcode):
+
+1. `cd ios && xcodegen generate && open Peaker.xcodeproj`, and check it builds locally.
+2. Report navigator (⌘9) → **Cloud** → **Get Started** → select the **Peaker** app (the App Store Connect app
+   record from the TestFlight setup above) → product **Peaker**, scheme **Peaker**.
+3. Grant access to the source code: Xcode opens GitHub to install Apple's Xcode Cloud app on `mowolf/peaker`.
+4. Edit the default workflow:
+   - **Start condition:** branch changes on `master`, files in `ios/` (optionally also pull requests).
+   - **Actions:** *Archive – iOS*, deployment preparation **TestFlight (Internal Testing Only)**;
+     optionally *Build – iOS* or *Test* for pull requests.
+   - **Post-actions:** *TestFlight Internal Testing* → choose a tester group.
+5. Build numbers: Xcode Cloud numbers its builds itself. GitHub Actions already uploaded builds with the run
+   number, so in App Store Connect → Xcode Cloud → Settings → *Build Number*, set the next build number above
+   the highest one in TestFlight (otherwise uploads of version 0.1.0 are rejected).
+
+After that, every matching push builds in Xcode Cloud; workflows and build logs are also in App Store Connect
+→ Xcode Cloud. PeakerKit's tests run in GitHub Actions or with `swift test` (they aren't part of the app
+scheme).
+
 ## Country packs in mowolf/height-data (`.github/workflows/build-packs.yml`)
 
 Elevation tiles are built once with `peaker-pipeline build-tiles` (hours for a continent; 30 m only for
