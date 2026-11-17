@@ -112,9 +112,4 @@ actor TileLoader {
             }
         }
     }
-
-    func clear() {
-        cache = [:]
-        order = []
-    }
 }

@@ -170,19 +170,19 @@ final class PackStore {
         return PackSnapshot(tileFiles: files, tileFiles30: files30, peakDatabases: dbs, landTiles: catalog?.landTiles())
     }
 
-    func isInstalled(_ code: String) -> Bool { installed.contains { $0.code == code } }
-
     /// Downloaded (not bundled) copy of a country, if any.
     func isDownloaded(_ code: String) -> Bool { installed.contains { $0.code == code && !$0.isBundled } }
 
     var downloadedBytes: Int { installed.filter { !$0.isBundled }.reduce(0) { $0 + $1.bytes } }
 
-    /// Catalog entries for countries around a coordinate, to suggest downloads.
-    func suggestedCountries(near c: GeoCoordinate) -> [Catalog.CountryEntry] {
-        (catalog?.countries ?? []).filter { e in
-            e.bbox.count == 4 && c.longitude >= e.bbox[0] && c.latitude >= e.bbox[1]
-                && c.longitude <= e.bbox[2] && c.latitude <= e.bbox[3]
-        }
+    /// Countries to suggest for a viewpoint that aren't downloaded yet: the one it's in, and up to four
+    /// others within the view distance (see `CountrySuggestions`).
+    func suggestions(at c: GeoCoordinate, countryCode: String?, viewDistance: Double) -> CountrySuggestions.Result {
+        var result = CountrySuggestions.suggest(at: c, countryCode: countryCode, in: catalog?.countries ?? [],
+                                                viewDistance: viewDistance, maxNearby: .max)
+        if let here = result.here, isDownloaded(here.code) { result.here = nil }
+        result.nearby = Array(result.nearby.filter { !isDownloaded($0.code) }.prefix(4))
+        return result
     }
 
     // MARK: - Catalog

@@ -13,6 +13,7 @@ final class AppModel {
     let motion = MotionService()
     let camera = CameraService()
     let network = NetworkMonitor()
+    let countryLocator = CountryLocator()
     /// Horizon, visible peaks and sun for the current viewpoint.
     let horizonStore = HorizonStore()
 
@@ -79,11 +80,16 @@ final class AppModel {
 
     var isUsingDemoViewpoint: Bool { fixedViewpoint != nil }
 
+    /// Top chip: the fixed viewpoint, else the summit you're on, else the coordinates.
     var viewpointName: String {
         if let v = fixedViewpoint { return v.name }
+        if let summit = horizonStore.summit { return summit.displayName(language: settings.peakLanguage) }
         guard let c = horizonStore.observer else { return "Locating…" }
         return String(format: "%.4f°, %.4f°", c.latitude, c.longitude)
     }
+
+    /// The viewpoint is a summit (fixed viewpoint or GPS on a peak): the chip shows a mountain.
+    var isOnSummit: Bool { fixedViewpoint != nil || horizonStore.summit != nil }
 
     /// Accuracy (metres) of the GPS position in use; nil for fixed viewpoints.
     var positionAccuracy: Double? {
@@ -207,12 +213,6 @@ final class AppModel {
         }
     }
 
-    /// Compass button: look north (stops following the device).
-    func faceNorth() {
-        setFollowing(false)
-        touchYaw = 0
-    }
-
     func resetAlignment() {
         headingOffset = 0
         pitchOffset = 0
@@ -223,7 +223,7 @@ final class AppModel {
     /// Any screen size works for the direction alone (it doesn't depend on the screen's size).
     private static let headingProbeSize = CGSize(width: 400, height: 800)
 
-    /// Compass heading of the view centre (degrees), for the compass ribbon and button.
+    /// Compass heading of the view centre (degrees), for the compass ribbon.
     var heading: Double { cameraPose(size: Self.headingProbeSize).azimuth }
 
     func cameraPose(size: CGSize) -> CameraPose {
