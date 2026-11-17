@@ -82,7 +82,7 @@ struct DownloadsView: View {
     }
 
     private var suggestion: Catalog.CountryEntry? {
-        guard search.isEmpty, !model.isUsingDemoViewpoint, let c = model.observer else { return nil }
+        guard search.isEmpty, !model.isUsingDemoViewpoint, let c = model.horizonStore.observer else { return nil }
         return model.packs.suggestedCountries(near: c).first { !model.packs.isDownloaded($0.code) }
     }
 }

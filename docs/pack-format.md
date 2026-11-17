@@ -21,8 +21,11 @@ v1/peaks/CH.sqlite.deflate      peak database of one pack                  (muta
 - **Borders:** you often see mountains in the neighbouring country. A pack contains
   every tile within `buffer_km` (default 50 km) of the country, and its peak DB holds
   all peaks inside those tiles, whatever country they are in.
-- **Dedup:** CH and AT share tiles. The app keeps one tile store with a reference
-  count per tile (which installed packs need it), and downloads a tile only once.
+- **Dedup:** CH and AT share tiles. The app keeps one tile store (`Application Support/Packs/tiles/<res>/`)
+  and downloads a tile only once. `TileLedger` (PeakerKit) tracks which installed packs and which running
+  downloads need each tile; a tile is deleted only when none do. Files nobody uses (e.g. from a cancelled
+  download) are removed at the next launch. `Packs/tile-checksums.json` records the SHA-256 of every stored
+  tile, so a tile whose manifest checksum changed (new dataset version) is downloaded again.
 - **Regions later:** "Alps" or "Colorado" is just another list of tiles, with no new format.
 
 ## `catalog.json`

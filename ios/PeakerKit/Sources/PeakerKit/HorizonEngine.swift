@@ -97,6 +97,7 @@ public struct HorizonResult: Sendable {
     public let cumulativeMaxTan: [Float]
     /// Skyline altitude (degrees) per ray; -90 where no terrain was found.
     public let skyline: [Double]
+    /// Ridge lines, far-first (the order to draw them in, so near ridges end up on top).
     public let ridges: [Ridge]
     /// Fraction of samples without elevation data (tiles not downloaded).
     public let missingFraction: Double
@@ -121,13 +122,7 @@ public struct HorizonResult: Sendable {
         let az = Geo.bearing(from: observer, to: target)
         let tanTarget = (height - Geo.curvatureDrop(distance: d, refraction: settings.refraction) - observerHeight) / d
         // Terrain right in front of the summit belongs to the mountain itself: ignore the last stretch.
-        let limit = d - max(150, 0.015 * d)
-        var j = -1
-        var lo = 0, hi = distances.count - 1
-        while lo <= hi {  // last sample with distance <= limit
-            let mid = (lo + hi) / 2
-            if distances[mid] <= limit { j = mid; lo = mid + 1 } else { hi = mid - 1 }
-        }
+        let j = lastSample(atMost: d - max(150, 0.015 * d))
         let altitude = degrees(atan(tanTarget))
         guard j >= 0 else { return VisiblePeakGeometry(azimuth: az, altitude: altitude, distance: d) }
         let ray = rayIndex(azimuth: az)
@@ -137,16 +132,21 @@ public struct HorizonResult: Sendable {
                                    distance: d)
     }
 
+    /// Index of the last sample along a ray at most `limit` metres away; -1 if there is none.
+    func lastSample(atMost limit: Double) -> Int {
+        var lo = 0, hi = distances.count - 1, j = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if distances[mid] <= limit { j = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        return j
+    }
+
     /// Altitude of the drawn terrain at a visible summit: the highest angle reached on this and the
     /// neighbouring rays up to slightly beyond the peak. Labels sit exactly on the rendered top instead of
     /// floating above it when the peak's coordinates are a little off (very noticeable for close peaks).
     func snappedAltitude(ray: Int, distance d: Double) -> Double? {
-        let limit = d + max(300, 0.03 * d)
-        var lo = 0, hi = distances.count - 1, j = -1
-        while lo <= hi {  // last sample with distance <= limit
-            let mid = (lo + hi) / 2
-            if distances[mid] <= limit { j = mid; lo = mid + 1 } else { hi = mid - 1 }
-        }
+        let j = lastSample(atMost: d + max(300, 0.03 * d))
         guard j >= 0 else { return nil }
         var best = -Double.infinity
         for r in [ray - 1, ray, ray + 1] {
@@ -290,37 +290,41 @@ public enum HorizonEngine {
     }
 
     /// Join ridge points of neighbouring rays into polylines: a point continues a line from the previous
-    /// ray if its distance is close (relative) and its angle is close. Short fragments are dropped.
+    /// ray if its distance is close (relative) and its angle is close. Lines that reach the last ray continue
+    /// into lines starting at ray 0 (no break due north). Short fragments are dropped.
+    /// Returned far-first (by mean distance), the order they are drawn in.
     static func link(perRay: [[RawRidgePoint]], distances: [Double], step: Double,
                      minPoints: Int = 4) -> [Ridge] {
-        struct Open { var points: [RidgePoint]; var skylineCount: Int; var last: RawRidgePoint }
-        var open: [Open] = []
-        var closed: [Ridge] = []
-        var nextID = 0
-
-        func close(_ o: Open) {
-            guard o.points.count >= minPoints || (o.skylineCount > 0 && o.points.count >= 2) else { return }
-            closed.append(Ridge(id: nextID, points: o.points, isSkyline: o.skylineCount * 2 >= o.points.count))
-            nextID += 1
+        struct Line {
+            var points: [RidgePoint]
+            var skylineCount: Int
+            var first: RawRidgePoint
+            var last: RawRidgePoint
+            var startRay: Int
+        }
+        func altitude(_ p: RawRidgePoint) -> Double { degrees(atan(Double(p.tan))) }
+        /// Score for `next` continuing a line that ended in `previous` on the neighbouring ray; nil = no match.
+        func continuation(_ previous: RawRidgePoint, _ next: RawRidgePoint) -> Double? {
+            let dPrev = distances[previous.sample], d = distances[next.sample]
+            let rel = abs(dPrev - d) / max(d, dPrev)
+            let dAlt = abs(altitude(previous) - altitude(next))
+            guard rel <= 0.08 || abs(dPrev - d) <= 250, dAlt <= 0.6 else { return nil }
+            return rel + dAlt / 2
         }
 
+        var open: [Line] = []
+        var finished: [Line] = []
         for (ray, points) in perRay.enumerated() {
             let az = Double(ray) * step
             var used = [Bool](repeating: false, count: open.count)
-            var next: [Open] = []
+            var next: [Line] = []
             for p in points {
-                let d = distances[p.sample]
-                let point = RidgePoint(azimuth: az, altitude: degrees(atan(Double(p.tan))), distance: d)
+                let point = RidgePoint(azimuth: az, altitude: altitude(p), distance: distances[p.sample])
                 // Best continuation among open lines not yet continued in this ray.
                 var best = -1
                 var bestScore = Double.infinity
                 for (k, o) in open.enumerated() where !used[k] {
-                    let dPrev = distances[o.last.sample]
-                    let rel = abs(dPrev - d) / max(d, dPrev)
-                    let dAlt = abs(degrees(atan(Double(o.last.tan))) - point.altitude)
-                    guard rel <= 0.08 || abs(dPrev - d) <= 250, dAlt <= 0.6 else { continue }
-                    let score = rel + dAlt / 2
-                    if score < bestScore { bestScore = score; best = k }
+                    if let score = continuation(o.last, p), score < bestScore { bestScore = score; best = k }
                 }
                 if best >= 0 {
                     used[best] = true
@@ -330,13 +334,42 @@ public enum HorizonEngine {
                     o.last = p
                     next.append(o)
                 } else {
-                    next.append(Open(points: [point], skylineCount: p.skyline ? 1 : 0, last: p))
+                    next.append(Line(points: [point], skylineCount: p.skyline ? 1 : 0, first: p, last: p,
+                                     startRay: ray))
                 }
             }
-            for (k, o) in open.enumerated() where !used[k] { close(o) }
+            for (k, o) in open.enumerated() where !used[k] { finished.append(o) }
             open = next
         }
-        open.forEach(close)
-        return closed
+
+        // Wrap around north: lines still open at the last ray continue into lines that started at ray 0.
+        var startsAtZero = finished.indices.filter { finished[$0].startRay == 0 }
+        startsAtZero += open.indices.filter { open[$0].startRay == 0 }.map { finished.count + $0 }
+        var all = finished + open
+        var absorbed = Set<Int>()
+        if perRay.count > 1 {
+            for i in finished.count..<all.count where !absorbed.contains(i) {
+                var best = -1
+                var bestScore = Double.infinity
+                for j in startsAtZero where j != i && !absorbed.contains(j) {
+                    if let score = continuation(all[i].last, all[j].first), score < bestScore {
+                        bestScore = score
+                        best = j
+                    }
+                }
+                guard best >= 0 else { continue }
+                all[i].points += all[best].points
+                all[i].skylineCount += all[best].skylineCount
+                all[i].last = all[best].last
+                absorbed.insert(best)
+            }
+        }
+
+        let kept = all.indices.filter { !absorbed.contains($0) }.map { all[$0] }.filter { o in
+            o.points.count >= minPoints || (o.skylineCount > 0 && o.points.count >= 2)
+        }
+        var ridges = kept.map { Ridge(id: 0, points: $0.points, isSkyline: $0.skylineCount * 2 >= $0.points.count) }
+        ridges.sort { $0.meanDistance > $1.meanDistance }
+        return ridges.enumerated().map { i, r in Ridge(id: i, points: r.points, isSkyline: r.isSkyline) }
     }
 }

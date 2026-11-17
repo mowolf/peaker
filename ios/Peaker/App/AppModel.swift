@@ -5,26 +5,6 @@ import Observation
 import PeakerKit
 import SwiftUI
 
-/// Fixed viewpoints inside the bundled packs, for trying the app anywhere (and as fallback without GPS).
-struct Viewpoint: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let region: String
-    let coordinate: GeoCoordinate
-    /// Direction the touch-mode view starts in (towards the famous view).
-    let initialYaw: Double
-
-    static let gornergrat = Viewpoint(id: "gornergrat", name: "Gornergrat", region: "Zermatt, Switzerland",
-                                      coordinate: GeoCoordinate(latitude: 45.9832, longitude: 7.7849), initialYaw: 255)
-    static let kalaPatthar = Viewpoint(id: "kala-patthar", name: "Kala Patthar", region: "Everest, Nepal",
-                                       coordinate: GeoCoordinate(latitude: 27.9958, longitude: 86.8285), initialYaw: 85)
-    static let poonHill = Viewpoint(id: "poon-hill", name: "Poon Hill", region: "Annapurna, Nepal",
-                                    coordinate: GeoCoordinate(latitude: 28.4005, longitude: 83.6969), initialYaw: 10)
-    static let all = [gornergrat, kalaPatthar, poonHill]
-
-    static func with(id: String) -> Viewpoint? { all.first { $0.id == id } }
-}
-
 @MainActor
 @Observable
 final class AppModel {
@@ -33,6 +13,8 @@ final class AppModel {
     let location = LocationService()
     let motion = MotionService()
     let camera = CameraService()
+    /// Horizon, visible peaks and sun for the current viewpoint.
+    let horizonStore = HorizonStore()
 
     /// Current interface orientation (portrait, or landscape for the wide panorama view).
     private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
@@ -69,14 +51,6 @@ final class AppModel {
     /// Live camera behind the lines (only while following the device).
     private(set) var showsCamera = false
 
-    // Result of the last horizon computation.
-    private(set) var observer: GeoCoordinate?
-    private(set) var observerGround: Double?
-    private(set) var horizon: HorizonResult?
-    private(set) var visiblePeaks: [VisiblePeak] = []
-    private(set) var isComputing = false
-    private(set) var noDataHere = false
-
     // Manual view direction.
     var touchYaw: Double = 255
     var touchPitch: Double = 3
@@ -93,26 +67,9 @@ final class AppModel {
     var pitchOffset: Double = 0
     var isAlignedByHand: Bool { headingOffset != 0 || pitchOffset != 0 }
 
-    /// Today's sun path with rise/set over the terrain; refreshed with the horizon and at midnight.
-    private(set) var sunDay: Sun.Day?
-    private var sunDayStart: Date?
-
     var selectedPeak: VisiblePeak?
     var showDownloads = false
-
-    private struct ComputeKey: Equatable {
-        var viewpoint: GeoCoordinate
-        /// Horizontal accuracy of the GPS fix used (metres); nil for fixed viewpoints.
-        var accuracy: Double?
-        var maxDistance: Double
-        var packVersion: Int
-    }
-    private let recomputePolicy = RecomputePolicy()
-    private var computedFor: ComputeKey?
-    private let tileLoader = TileLoader()
-    /// Increases with every computation started; only the newest one's result is applied (GPS updates arrive
-    /// about once a second, a computation with 30 m terrain can take longer).
-    private var computeGeneration = 0
+    var showSettings = false
 
     /// The fixed viewpoint in use: the chosen one, or Gornergrat while there's no GPS fix.
     var fixedViewpoint: Viewpoint? {
@@ -124,7 +81,7 @@ final class AppModel {
 
     var viewpointName: String {
         if let v = fixedViewpoint { return v.name }
-        guard let c = observer else { return "Locating…" }
+        guard let c = horizonStore.observer else { return "Locating…" }
         return String(format: "%.4f°, %.4f°", c.latitude, c.longitude)
     }
 
@@ -138,7 +95,7 @@ final class AppModel {
 
     /// Second line of the location chip.
     var viewpointDetail: String? {
-        let height = observerGround.map { settings.elevation($0) }
+        let height = horizonStore.observerGround.map { settings.elevation($0) }
         if let v = fixedViewpoint {
             let parts: [String?] = [v.region, height]
             return parts.compactMap { $0 }.joined(separator: " · ")
@@ -192,7 +149,7 @@ final class AppModel {
             motion.start()
             isFollowingDevice = true
         } else {
-            if let pose = currentDevicePose(size: CGSize(width: 400, height: 800)) {
+            if let pose = currentDevicePose(size: Self.headingProbeSize) {
                 touchYaw = pose.azimuth
                 touchPitch = max(-45, min(45, pose.pitch))
             }
@@ -241,7 +198,7 @@ final class AppModel {
         if active {
             if isFollowingDevice { motion.start() }
             if showsCamera { camera.start() }
-            refreshSun()
+            horizonStore.refreshSun()
         } else {
             camera.stop()
             motion.stop()
@@ -260,6 +217,12 @@ final class AppModel {
     }
 
     // MARK: - Camera pose
+
+    /// Any screen size works for the direction alone (it doesn't depend on the screen's size).
+    private static let headingProbeSize = CGSize(width: 400, height: 800)
+
+    /// Compass heading of the view centre (degrees), for the compass ribbon and button.
+    var heading: Double { cameraPose(size: Self.headingProbeSize).azimuth }
 
     func cameraPose(size: CGSize) -> CameraPose {
         if isFollowingDevice, let pose = currentDevicePose(size: size) {
@@ -288,79 +251,11 @@ final class AppModel {
         return GeoCoordinate(latitude: c.latitude, longitude: c.longitude)
     }
 
-    /// Recompute when the viewpoint moved > 75 m, the view distance changed, or packs changed.
+    /// Recompute when the viewpoint moved noticeably or any input changed (see `HorizonStore.update`).
     func recompute(force: Bool = false) async {
-        let target = currentViewpoint
-        let accuracy = positionAccuracy
-        let maxDistance = settings.maxDistanceKm * 1000
-        let packVersion = packs.version
-        if !force, let last = computedFor, last.maxDistance == maxDistance, last.packVersion == packVersion,
-           !recomputePolicy.shouldRecompute(from: last.viewpoint, oldAccuracy: last.accuracy,
-                                            to: target, newAccuracy: accuracy) {
-            return
-        }
-        computedFor = ComputeKey(viewpoint: target, accuracy: accuracy, maxDistance: maxDistance,
-                                 packVersion: packVersion)
-        computeGeneration += 1
-        let generation = computeGeneration
-        isComputing = true
-
-        let snapshot = packs.snapshot()
-        let eyeHeight = settings.eyeHeight
-        let loader = tileLoader
-        let output = await Task.detached(priority: .userInitiated) { () -> ComputeOutput? in
-            var horizonSettings = HorizonSettings()
-            horizonSettings.maxDistance = maxDistance
-            let ids = TileID.covering(center: target, radius: maxDistance)
-            // High-detail (30 m) terrain where it matters: within ~35 km of the viewer.
-            let near = Set(TileID.covering(center: target, radius: 35_000))
-            let tiles = await loader.tiles(ids, near: near, files: snapshot.tileFiles, files30: snapshot.tileFiles30,
-                                           peakDatabases: snapshot.peakDatabases, version: packVersion)
-            let terrain = TerrainModel(covering: ids, tiles: tiles) { id in
-                snapshot.landTiles?.contains(id)
-            }
-            guard let ground = terrain.height(latitude: target.latitude, longitude: target.longitude) else {
-                return nil
-            }
-            let horizon = HorizonEngine.compute(observer: target, observerHeight: Double(ground) + eyeHeight,
-                                                terrain: terrain, settings: horizonSettings)
-            let peaks = PeakDatabase.peaks(in: snapshot.peakDatabases, center: target, radius: maxDistance)
-            return ComputeOutput(ground: Double(ground), horizon: horizon, visible: horizon.visiblePeaks(peaks))
-        }.value
-
-        // A newer computation started meanwhile: its result wins, don't show this older one.
-        guard generation == computeGeneration else { return }
-        isComputing = false
-        observer = target
-        if let output {
-            noDataHere = false
-            observerGround = output.ground
-            horizon = output.horizon
-            visiblePeaks = output.visible
-            refreshSun(force: true)
-        } else {
-            noDataHere = true
-            observerGround = nil
-            horizon = nil
-            visiblePeaks = []
-        }
-    }
-
-    /// Recompute the sun's day when the horizon changed (`force`) or a new day began.
-    func refreshSun(force: Bool = false) {
-        guard let horizon else { sunDay = nil; return }
-        var calendar = Calendar.current
-        calendar.timeZone = .current
-        let today = calendar.startOfDay(for: Date())
-        guard force || sunDayStart != today else { return }
-        sunDayStart = today
-        sunDay = Sun.day(containing: Date(), at: horizon.observer, timeZone: .current, horizon: horizon,
-                         observerHeight: horizon.observerHeight)
-    }
-
-    private struct ComputeOutput: Sendable {
-        var ground: Double
-        var horizon: HorizonResult
-        var visible: [VisiblePeak]
+        let request = HorizonStore.Request(viewpoint: currentViewpoint, accuracy: positionAccuracy,
+                                           maxDistance: settings.maxDistanceKm * 1000, eyeHeight: settings.eyeHeight,
+                                           packVersion: packs.version)
+        await horizonStore.update(request, packs: packs.snapshot(), force: force)
     }
 }

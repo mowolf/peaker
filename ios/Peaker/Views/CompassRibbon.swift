@@ -7,7 +7,7 @@ struct CompassRibbon: View {
 
     var body: some View {
         GeometryReader { geo in
-            let heading = model.cameraPose(size: CGSize(width: 400, height: 800)).azimuth
+            let heading = model.heading
             Canvas { context, size in
                 let width = Double(size.width), height = Double(size.height)
                 let pointsPerDegree: Double = width / 90  // 90° visible across the ribbon
@@ -50,7 +50,7 @@ struct CompassRibbon: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Heading")
-        .accessibilityValue("\(Int(model.cameraPose(size: CGSize(width: 400, height: 800)).azimuth.rounded())) degrees")
+        .accessibilityValue("\(Int(model.heading.rounded())) degrees")
     }
 
     static func cardinal(_ degrees: Int) -> String {

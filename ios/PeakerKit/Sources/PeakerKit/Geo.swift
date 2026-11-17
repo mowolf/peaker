@@ -75,3 +75,33 @@ public enum Geo {
         return d
     }
 }
+
+/// A latitude/longitude box that does not cross the antimeridian (west <= east).
+public struct GeoBox: Sendable, Hashable {
+    public var south: Double, north: Double, west: Double, east: Double
+
+    public init(south: Double, north: Double, west: Double, east: Double) {
+        self.south = south; self.north = north; self.west = west; self.east = east
+    }
+
+    public func contains(_ c: GeoCoordinate) -> Bool {
+        c.latitude >= south && c.latitude <= north && c.longitude >= west && c.longitude <= east
+    }
+
+    /// Boxes covering whole tiles plus `margin` degrees, split in two where the tiles wrap around ±180°.
+    public static func covering(_ tiles: [TileID], margin: Double = 0) -> [GeoBox] {
+        guard let minLat = tiles.map(\.lat).min(), let maxLat = tiles.map(\.lat).max() else { return [] }
+        let south = max(-90, Double(minLat) - margin), north = min(90, Double(maxLat + 1) + margin)
+        let lons = tiles.map(\.lon)
+        let minLon = lons.min()!, maxLon = lons.max()!
+        if maxLon - minLon > 180 {
+            // Wrapped: eastern part from the westernmost positive tile to 180, western part from -180.
+            let eastStart = lons.filter { $0 >= 0 }.min() ?? minLon
+            let westEnd = lons.filter { $0 < 0 }.max() ?? maxLon
+            return [GeoBox(south: south, north: north, west: Double(eastStart) - margin, east: 180),
+                    GeoBox(south: south, north: north, west: -180, east: Double(westEnd + 1) + margin)]
+        }
+        return [GeoBox(south: south, north: north, west: max(-180, Double(minLon) - margin),
+                       east: min(180, Double(maxLon + 1) + margin))]
+    }
+}

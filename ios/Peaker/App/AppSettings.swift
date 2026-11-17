@@ -35,6 +35,9 @@ final class AppSettings {
         fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
     }
 
+    /// Language for peak names: the device's language (OSM/Wikidata `name:<code>`).
+    var peakLanguage: String? { Locale.current.language.languageCode?.identifier }
+
     func elevation(_ metres: Double) -> String {
         units == .metric
             ? "\(Int(metres.rounded())) m"

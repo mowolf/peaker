@@ -20,9 +20,11 @@ actor TileLoader {
 
     /// - Parameters:
     ///   - near: tiles close enough to the viewer to be worth the 30 m version
+    ///   - peaks: all peaks on the requested tiles (and a little around them); their official heights are
+    ///     burned into the tiles. Must cover whole tiles: loaded tiles are cached and reused.
     ///   - version: installed-packs version; a change (new peaks, new tiles) empties the cache.
     func tiles(_ ids: [TileID], near: Set<TileID>, files: [TileID: URL], files30: [TileID: URL],
-               peakDatabases: [URL], version: Int) async -> [TileID: ElevationTile] {
+               peaks: [PeakInfo], version: Int) async -> [TileID: ElevationTile] {
         if version != cacheVersion {
             cache = [:]
             order = []
@@ -40,10 +42,13 @@ actor TileLoader {
                 toLoad.append((key, url))
             }
         }
+        let summits = toLoad.isEmpty ? [] : peaks.compactMap { p in
+            p.elevation.map { SummitBurnIn.Summit(coordinate: p.coordinate, elevation: $0) }
+        }
         // Decode in parallel: inflate + predictor take ~20 ms per 90 m tile, ~200 ms per 30 m tile.
         let loaded = await withTaskGroup(of: (Key, ElevationTile?).self) { group in
             for (key, url) in toLoad {
-                group.addTask { (key, Self.load(key.id, from: url, peakDatabases: peakDatabases)) }
+                group.addTask { (key, Self.load(key.id, from: url, summits: summits)) }
             }
             var result: [(Key, ElevationTile?)] = []
             for await r in group { result.append(r) }
@@ -59,18 +64,20 @@ actor TileLoader {
         return out
     }
 
-    private static func load(_ id: TileID, from url: URL, peakDatabases: [URL]) -> ElevationTile? {
+    /// Margin (degrees) around a tile for summits to burn in: a summit's cone can reach over the tile edge.
+    static let summitMargin = 0.01
+
+    private static func load(_ id: TileID, from url: URL, summits: [SummitBurnIn.Summit]) -> ElevationTile? {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let tile = try? TileCodec.decode(data) else { return nil }
-        // Summits from a slightly larger box: a summit's cone can reach over the tile edge.
-        let margin = 0.01
-        let peaks = PeakDatabase.peaks(in: peakDatabases, south: Double(id.lat) - margin,
-                                       north: Double(id.lat + 1) + margin,
-                                       west: Double(id.lon) - margin, east: Double(id.lon + 1) + margin)
-        let summits = peaks.compactMap { p in
-            p.elevation.map { SummitBurnIn.Summit(coordinate: p.coordinate, elevation: $0) }
+        let m = summitMargin
+        let south = Double(id.lat) - m, north = Double(id.lat + 1) + m
+        let centerLon = Double(id.lon) + 0.5
+        let near = summits.filter { s in
+            s.coordinate.latitude >= south && s.coordinate.latitude <= north
+                && abs(Geo.angleDifference(s.coordinate.longitude, centerLon)) <= 0.5 + m
         }
-        return SummitBurnIn.apply(to: tile, summits: summits)
+        return SummitBurnIn.apply(to: tile, summits: near)
     }
 
     private func touch(_ key: Key) {

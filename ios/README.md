@@ -31,8 +31,8 @@ peaker-pipeline bundle CH --dest ../ios/Peaker/Resources/BundledPacks/DEMO --bbo
 | path | what |
 |---|---|
 | `PeakerKit/` | Swift package with the platform-independent core: geo maths, `.pkt` tile decoder, horizon/ridge engine, camera projection, label layout, catalog models. `swift test` runs on macOS and Linux. |
-| `Peaker/App` | app entry, `AppModel` (state, horizon computation), settings |
-| `Peaker/Services` | GPS, Core Motion attitude, camera, tile loader, SQLite peak queries, pack downloads |
+| `Peaker/App` | app entry, `AppModel` (view state, sensors, modes), `HorizonStore` (background horizon computation, visible peaks, sun), settings, fixed viewpoints |
+| `Peaker/Services` | GPS, Core Motion attitude, camera, tile loader, SQLite peak queries, `PackStore` (installed packs, tile bookkeeping) and `PackDownloader` (networking, checksums) |
 | `Peaker/Views` | viewer (camera / touch mode), panorama canvas, compass, sheets |
 | `Peaker/Resources/BundledPacks` | packs shipped in the app, one folder each (built by `pipeline/`, `bundle` command) |
 
