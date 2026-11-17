@@ -6,18 +6,20 @@ struct DownloadsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
+    /// Country of the viewpoint from reverse geocoding (nil offline or until it answers).
+    @State private var countryCode: String?
 
     // Sections are separate properties: one big body took Xcode > 300 ms to type-check.
     var body: some View {
         NavigationStack {
             List {
-                if let here = suggestion {
-                    Section("Where you are") {
-                        CountryRow(entry: here)
-                    }
-                }
+                suggestionSections
                 installedSection
                 catalogSection
+            }
+            .task(id: viewpointKey) {
+                guard let c = model.horizonStore.observer else { return }
+                countryCode = await model.countryLocator.countryCode(at: c)
             }
             .searchable(text: $search, prompt: "Search countries")
             .refreshable { await model.packs.refreshCatalog() }
@@ -90,9 +92,36 @@ struct DownloadsView: View {
         return all.filter { $0.name.localizedCaseInsensitiveContains(search) || $0.code.localizedCaseInsensitiveContains(search) }
     }
 
-    private var suggestion: Catalog.CountryEntry? {
-        guard search.isEmpty, !model.isUsingDemoViewpoint, let c = model.horizonStore.observer else { return nil }
-        return model.packs.suggestedCountries(near: c).first { !model.packs.isDownloaded($0.code) }
+    /// The viewpoint rounded to ~1 km: look up its country again only when it really moved.
+    private var viewpointKey: String? {
+        model.horizonStore.observer.map { String(format: "%.2f,%.2f", $0.latitude, $0.longitude) }
+    }
+
+    private var suggestions: CountrySuggestions.Result? {
+        guard search.isEmpty, let c = model.horizonStore.observer else { return nil }
+        return model.packs.suggestions(at: c, countryCode: countryCode,
+                                       viewDistance: model.settings.maxDistanceKm * 1000)
+    }
+
+    /// The viewpoint's country, and neighbours whose mountains are within the view distance.
+    @ViewBuilder
+    private var suggestionSections: some View {
+        if let s = suggestions {
+            if let here = s.here {
+                Section(model.isUsingDemoViewpoint ? "For \(model.viewpointName)" : "Where you are") {
+                    CountryRow(entry: here)
+                }
+            }
+            if !s.nearby.isEmpty {
+                Section {
+                    ForEach(s.nearby) { CountryRow(entry: $0) }
+                } header: {
+                    Text("Visible from here")
+                } footer: {
+                    Text("Within your view distance of \(model.settings.distance(model.settings.maxDistanceKm * 1000)). Each country already includes about 50 km beyond its border.")
+                }
+            }
+        }
     }
 }
 
