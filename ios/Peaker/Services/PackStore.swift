@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import PeakerKit
+import UIKit
 
 struct InstalledPack: Codable, Hashable, Identifiable {
     var code: String
@@ -64,6 +65,10 @@ final class PackStore {
     @ObservationIgnored private var reserved: [String: [String: Set<String>]] = [:]
     /// SHA-256 of every stored tile file, per resolution: tells an outdated tile from a current one.
     @ObservationIgnored private var tileChecksums: [String: [String: String]] = [:]
+    /// Running downloads by pack code, so they can be cancelled.
+    @ObservationIgnored private var downloadTasks: [String: Task<Void, Never>] = [:]
+    /// Free space to leave on the device after a download (bytes).
+    private static let spaceReserve = 300 * 1024 * 1024
 
     private static let resolutions = ["90", "30"]
     private let root: URL
@@ -94,9 +99,16 @@ final class PackStore {
         var rootURL = root
         try? rootURL.setResourceValues(values)
 
-        if let data = try? Data(contentsOf: installedFile),
-           let list = try? JSONDecoder().decode([InstalledPack].self, from: data) {
-            installed = list.filter { !$0.isBundled }
+        // An unreadable list must not look like "nothing installed": the cleanup below would then delete every
+        // downloaded tile. Without a readable list, keep all files.
+        var installedListReadable = true
+        if FileManager.default.fileExists(atPath: installedFile.path) {
+            if let data = try? Data(contentsOf: installedFile),
+               let list = try? JSONDecoder().decode([InstalledPack].self, from: data) {
+                installed = list.filter { !$0.isBundled }
+            } else {
+                installedListReadable = false
+            }
         }
         installed.insert(contentsOf: loadBundledPacks(), at: 0)
         if let data = try? Data(contentsOf: catalogFile) {
@@ -106,7 +118,7 @@ final class PackStore {
            let sums = try? JSONDecoder().decode([String: [String: String]].self, from: data) {
             tileChecksums = sums
         }
-        removeUnusedTiles()
+        if installedListReadable { removeUnusedTiles() }
     }
 
     private func loadBundledPacks() -> [InstalledPack] {
@@ -235,25 +247,65 @@ final class PackStore {
 
     // MARK: - Install / remove
 
+    /// Start downloading a country (no-op while it is already downloading).
+    /// - Parameter allowsMobileData: false = Wi-Fi only; the download stops with a message on mobile data.
+    func startInstall(_ entry: Catalog.CountryEntry, allowsMobileData: Bool) {
+        guard downloadTasks[entry.code] == nil else { return }
+        let session = PackDownloader.session(allowsMobileData: allowsMobileData)
+        downloadTasks[entry.code] = Task { await install(entry, session: session) }
+    }
+
+    /// Stop a running download. Tiles fetched so far are kept for the next try (see `install`).
+    func cancelInstall(_ code: String) {
+        downloadTasks[code]?.cancel()
+    }
+
     // `install` is split into small functions on purpose: one long async function containing the
     // task group made the Swift 6.2 compiler hang (SIL ClosureLifetimeFixup pass).
-    func install(_ entry: Catalog.CountryEntry) async {
+    private func install(_ entry: Catalog.CountryEntry, session: URLSession) async {
+        defer { downloadTasks[entry.code] = nil }
         guard let baseURL else { return }
         guard downloads[entry.code] == nil || downloads[entry.code]?.error != nil else { return }
         downloads[entry.code] = DownloadState()
+        // Keep going for a while when the user switches apps (iOS suspends the app after a few seconds
+        // otherwise, and the download fails). If iOS ends that time, the download is cancelled cleanly.
+        let code = entry.code
+        let background = BackgroundTime(name: "Download \(entry.name)") { [weak self] in self?.cancelInstall(code) }
+        defer { background.end() }
         do {
-            let pack = try await downloadPack(entry, v1: baseURL.appendingPathComponent("v1"))
+            let pack = try await downloadPack(entry, v1: baseURL.appendingPathComponent("v1"), session: session)
             finishInstall(pack)
         } catch {
-            downloads[entry.code]?.error = error.localizedDescription
             // Tiles fetched so far stay on disk (with their checksums), so trying again right away resumes.
             // Unused, they are removed at the next launch or after the next completed install.
             reserved[entry.code] = nil
             saveChecksums()
+            if Self.isCancellation(error) {
+                downloads[entry.code] = nil
+            } else if PackDownloader.isRefusedForMobileData(error) {
+                downloads[entry.code]?.error = PackError.needsWiFi.localizedDescription
+            } else {
+                downloads[entry.code]?.error = error.localizedDescription
+            }
         }
     }
 
-    private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL) async throws -> InstalledPack {
+    private static func isCancellation(_ error: any Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
+    /// Fail early with a clear message instead of running out of space halfway through.
+    private func checkFreeSpace(needed: Int) throws {
+        let key = URLResourceKey.volumeAvailableCapacityForImportantUsageKey
+        guard let free = (try? root.resourceValues(forKeys: [key]))?.volumeAvailableCapacityForImportantUsage else {
+            return  // unknown: try anyway
+        }
+        if Int64(needed + Self.spaceReserve) > free {
+            throw PackError.notEnoughSpace(needed: Int64(needed), available: free)
+        }
+    }
+
+    private func downloadPack(_ entry: Catalog.CountryEntry, v1: URL, session: URLSession) async throws -> InstalledPack {
         let manifestData = try await PackDownloader.fetch(v1.appendingPathComponent(entry.manifest))
         let manifest = try PackManifest.decode(manifestData)
         let tiles = manifest.tiles["90"] ?? []
@@ -267,17 +319,19 @@ final class PackStore {
         var total = manifest.peaks.bytes
         for t in needed90 + needed30 { total += t.bytes }
         downloads[entry.code]?.bytesTotal = total
+        // The peak database is unpacked after the download: count its full size too.
+        try checkFreeSpace(needed: total + manifest.peaks.uncompressedBytes)
 
         let code = entry.code
         // 90 m first: enough to show the view; then the high-detail 30 m tiles.
         for (resolution, list) in [("90", needed90), ("30", needed30)] where !list.isEmpty {
             try await PackDownloader.downloadTiles(list, resolution: resolution, from: v1,
-                                                   to: tilesDir(resolution)) { [weak self] tile in
+                                                   to: tilesDir(resolution), session: session) { [weak self] tile in
                 await self?.tileStored(tile, resolution: resolution, pack: code)
             }
         }
         let sqliteBytes = try await PackDownloader.downloadPeakDatabase(
-            manifest.peaks, from: v1, to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"))
+            manifest.peaks, from: v1, to: peaksDir.appendingPathComponent("\(manifest.code).sqlite"), session: session)
         addProgress(code, bytes: manifest.peaks.bytes)
 
         var bytes = sqliteBytes
@@ -342,5 +396,27 @@ final class PackStore {
         if let data = try? JSONEncoder().encode(tileChecksums) {
             try? data.write(to: checksumsFile, options: .atomic)
         }
+    }
+}
+
+/// Extra time to finish work after the app goes to the background (`beginBackgroundTask`).
+@MainActor
+private final class BackgroundTime {
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    /// - Parameter expired: called when iOS ends the extra time; the assertion is released right after.
+    init(name: String, expired: @escaping @MainActor @Sendable () -> Void) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            MainActor.assumeIsolated {
+                expired()
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

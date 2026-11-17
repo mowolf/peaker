@@ -151,7 +151,9 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 - [x] **O-1** Fetch and cache `catalog.json`, and show a country list with sizes and search.
 - [ ] **O-2** Suggest the current country (reverse geocode the GPS position) and neighbouring countries for views across borders.
-- [x] **O-3** *(foreground async downloads with progress; true background session still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
+- [x] **O-3** *(foreground downloads with progress, cancel, free-space check, extra background time when
+      switching apps, size confirmation, Wi-Fi only by default with a one-time mobile-data exception; true
+      background session still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
 - [x] **O-4** Verify SHA-256, then move tiles into Application Support (`isExcludedFromBackup = true`).
 - [x] **O-5** *(TileLedger: also protects tiles of running downloads; unused tiles removed at launch)* Shared tile
       store with reference counting, so deleting a country only removes tiles no other installed pack uses.
@@ -168,8 +170,8 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [ ] **V-3** *(partly: 30 m decode memory −35 %, label data built once per result, no redraws from unchanged
       sensor values; still to measure on a device with Instruments)* Performance: battery use, thermals, memory
       with large packs.
-- [ ] **V-7** *(services/stores/AppModel already Swift 6-clean; strict checking on as warnings)* Switch the app to
-      Swift 6 language mode once an Xcode build shows no concurrency warnings.
+- [x] **V-7** *(the first Xcode build with complete checking had no concurrency warnings)* Switch the app to
+      Swift 6 language mode.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
 - [ ] **V-6** App icon, screenshots, privacy policy, TestFlight beta, App Store submission.

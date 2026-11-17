@@ -27,6 +27,10 @@ final class AppSettings {
     var labelDensity: LabelDensity { didSet { defaults.set(labelDensity.rawValue, forKey: "labelDensity") } }
     /// ID of a fixed viewpoint (see `Viewpoint.all`); empty = use GPS.
     var fixedViewpointID: String { didSet { defaults.set(fixedViewpointID, forKey: "fixedViewpointID") } }
+    /// Country downloads may use mobile data (and Low Data Mode); off = Wi-Fi only.
+    var allowsMobileDataDownloads: Bool {
+        didSet { defaults.set(allowsMobileDataDownloads, forKey: "allowsMobileDataDownloads") }
+    }
 
     init() {
         maxDistanceKm = defaults.object(forKey: "maxDistanceKm") as? Double ?? 200
@@ -34,6 +38,7 @@ final class AppSettings {
         units = UnitSystem(rawValue: defaults.string(forKey: "units") ?? "") ?? .metric
         labelDensity = LabelDensity(rawValue: defaults.string(forKey: "labelDensity") ?? "") ?? .normal
         fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
+        allowsMobileDataDownloads = defaults.bool(forKey: "allowsMobileDataDownloads")  // default false
     }
 
     /// Language for peak names: the device's language (OSM/Wikidata `name:<code>`).

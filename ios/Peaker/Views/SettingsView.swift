@@ -26,6 +26,14 @@ struct SettingsView: View {
                     Text("Ridges further away than the view distance aren't drawn. Longer distances take a little longer to compute.")
                 }
 
+                Section {
+                    Toggle("Use mobile data", isOn: $settings.allowsMobileDataDownloads)
+                } header: {
+                    Text("Downloads")
+                } footer: {
+                    Text("Off: countries download only over Wi-Fi (not over mobile data, a personal hotspot or in Low Data Mode). Countries are often several hundred MB. You can still allow mobile data for a single download.")
+                }
+
                 Section("Units") {
                     Picker("Units", selection: $settings.units) {
                         ForEach(UnitSystem.allCases) { Text($0.title).tag($0) }

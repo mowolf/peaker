@@ -12,6 +12,7 @@ final class AppModel {
     let location = LocationService()
     let motion = MotionService()
     let camera = CameraService()
+    let network = NetworkMonitor()
     /// Horizon, visible peaks and sun for the current viewpoint.
     let horizonStore = HorizonStore()
 
@@ -136,8 +137,10 @@ final class AppModel {
         }
         camera.prepare()
         setFollowing(true)  // start with automatic direction when the device has the sensors
+        // Catalog and first view at the same time (the catalog only needs the network).
+        async let catalog: Void = packs.refreshCatalog()
         await recompute(force: true)
-        await packs.refreshCatalog()
+        await catalog
     }
 
     /// Turn automatic direction (gyro + compass) on or off. Turning it off keeps the current view.

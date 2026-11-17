@@ -4,10 +4,8 @@ import SwiftUI
 /// The main screen: full-screen panorama (camera or rendered), with floating Liquid Glass controls.
 struct ViewerView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        @Bindable var model = model
         ZStack {
             background
             PanoramaView()
@@ -24,37 +22,8 @@ struct ViewerView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .sheet(item: $model.selectedPeak) { peak in
-            PeakDetailView(visible: peak)
-                .presentationDetents([.height(340), .large])
-        }
-        .sheet(isPresented: $model.showDownloads) {
-            DownloadsView()
-        }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView()
-        }
-        // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
-        .onAppear { model.updateInterfaceOrientation() }
-        // The sun moves: refresh its day after midnight (current position is computed every frame).
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                model.horizonStore.refreshSun()
-            }
-        }
-        // The view-distance slider and eye-height stepper change in steps: wait until they rest before the
-        // (expensive) recompute. Cancelled and restarted on every change.
-        .task(id: [model.settings.maxDistanceKm, model.settings.eyeHeight]) {
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            await model.recompute()
-        }
-        .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-        .onChange(of: model.packs.version) { Task { await model.recompute() } }
-        // Pause camera and sensors in the background (battery), resume as they were.
-        .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
+        .modifier(ViewerSheets())
+        .modifier(ViewerLifecycle())
     }
 
     /// The camera preview stays in the view hierarchy once access is granted (so it isn't rebuilt on every
@@ -64,11 +33,64 @@ struct ViewerView: View {
             SkyBackground()
             if model.camera.isAuthorized {
                 CameraPreview(session: model.camera.session, rotationAngle: model.cameraRotationAngle)
+                    .allowsHitTesting(false)
                     .opacity(model.showsCamera && model.camera.isRunning ? 1 : 0)
                     .animation(.easeOut(duration: 0.25), value: model.showsCamera && model.camera.isRunning)
             }
         }
         .ignoresSafeArea()
+    }
+}
+
+/// Peak details, offline maps and settings sheets. (Separate from `ViewerView.body`, which otherwise took
+/// Xcode > 300 ms to type-check.)
+private struct ViewerSheets: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        @Bindable var model = model
+        content
+            .sheet(item: $model.selectedPeak) { peak in
+                PeakDetailView(visible: peak)
+                    .presentationDetents([.height(340), .large])
+            }
+            .sheet(isPresented: $model.showDownloads) {
+                DownloadsView()
+            }
+            .sheet(isPresented: $model.showSettings) {
+                SettingsView()
+            }
+    }
+}
+
+/// Orientation, sun refresh, recomputing on setting and pack changes, pausing in the background.
+private struct ViewerLifecycle: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            // Landscape = wide panorama: track the orientation for the sensors and the camera preview.
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateInterfaceOrientation() }
+            .onAppear { model.updateInterfaceOrientation() }
+            // The sun moves: refresh its day after midnight (current position is computed every frame).
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    model.horizonStore.refreshSun()
+                }
+            }
+            // The view-distance slider and eye-height stepper change in steps: wait until they rest before the
+            // (expensive) recompute. Cancelled and restarted on every change.
+            .task(id: [model.settings.maxDistanceKm, model.settings.eyeHeight]) {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                await model.recompute()
+            }
+            .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
+            .onChange(of: model.packs.version) { Task { await model.recompute() } }
+            // Pause camera and sensors in the background (battery), resume as they were.
+            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
     }
 }
 
@@ -166,9 +188,10 @@ private struct ViewpointChip: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .contentShape(Capsule())  // the whole capsule opens the menu, not just the text
+            .glassEffect(.regular, in: .capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
     }
 }
 
@@ -234,56 +257,75 @@ private struct CalibrationHint: View {
 /// Gyro (automatic direction) and camera toggles on the left; settings, downloads and compass on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
-    @Namespace private var glass
 
     var body: some View {
-        GlassEffectContainer(spacing: 16) {
-            HStack(spacing: 12) {
-                ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
-                             icon: "gyroscope", isOn: model.isFollowingDevice) {
-                    model.setFollowing(!model.isFollowingDevice)
-                }
-                .glassEffectID("follow", in: glass)
-                .disabled(!model.motion.isAvailable)
-
-                ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
-                             icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
-                    model.setCamera(!model.showsCamera)
-                }
-                .glassEffectID("camera", in: glass)
-
-                Spacer(minLength: 0)
-
-                IconButton(title: "Settings", icon: "gearshape") { model.showSettings = true }
-                    .glassEffectID("settings", in: glass)
-
-                IconButton(title: "Offline maps", icon: "arrow.down.circle") { model.showDownloads = true }
-                    .glassEffectID("downloads", in: glass)
-
-                CompassButton()
-                    .glassEffectID("compass-button", in: glass)
+        HStack(spacing: 12) {
+            GlassEffectContainer(spacing: 16) {
+                controls
             }
-            .animation(.smooth, value: model.isFollowingDevice)
-            .animation(.smooth, value: model.showsCamera)
+            // Outside the container: its needle changes every frame while following the phone, and
+            // nothing that redraws at 60 Hz should share a glass container with the other buttons.
+            CompassButton()
         }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 12) {
+            ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
+                         icon: "gyroscope", isOn: model.isFollowingDevice) {
+                model.setFollowing(!model.isFollowingDevice)
+            }
+            .disabled(!model.motion.isAvailable)
+
+            ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
+                         icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
+                model.setCamera(!model.showsCamera)
+            }
+
+            Spacer(minLength: 0)
+
+            GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                Image(systemName: "gearshape").font(.title3)
+            }
+
+            GlassCircleButton(title: "Offline maps", action: { model.showDownloads = true }) {
+                Image(systemName: "arrow.down.circle").font(.title3)
+            }
+        }
+        .animation(.smooth, value: model.isFollowingDevice)
+        .animation(.smooth, value: model.showsCamera)
     }
 }
 
-/// Round glass button with an icon (title for VoiceOver).
-private struct IconButton: View {
+/// Round 52 pt glass button.
+///
+/// The glass and the hit area are part of the button's label: with the glass applied outside the button,
+/// only the small icon itself reacted to taps and taps on the rest of the circle went to the glass.
+/// Press feedback comes from the button style instead of interactive glass, which handles touches itself.
+private struct GlassCircleButton<Icon: View>: View {
     let title: String
-    let icon: String
+    var glass: Glass = .regular
     let action: () -> Void
+    @ViewBuilder let icon: () -> Icon
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
-                .font(.title3)
+            icon()
                 .frame(width: 52, height: 52)
+                .contentShape(Circle())
+                .glassEffect(glass, in: .circle)
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .buttonStyle(PressScaleStyle())
+        .accessibilityLabel(title)
+    }
+}
+
+/// Shrinks the label slightly while pressed.
+struct PressScaleStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -294,42 +336,45 @@ private struct ToggleButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
+        GlassCircleButton(title: title, glass: isOn ? Glass.regular.tint(.orange) : Glass.regular, action: action) {
+            Image(systemName: icon)
                 .font(.title3)
                 .foregroundStyle(isOn ? Color.white : Color.primary)
-                .frame(width: 52, height: 52)
         }
-        .buttonStyle(.plain)
-        .glassEffect(isOn ? Glass.regular.tint(.orange).interactive() : Glass.regular.interactive(), in: .circle)
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
 
-/// Needle pointing north on screen. Tap: look north (and stop following the phone).
+/// Compass button: tap to look north (and stop following the phone).
+///
+/// The button itself doesn't read the heading, so it isn't rebuilt on every motion update (60 Hz) and a tap
+/// isn't interrupted; only the needle inside redraws.
 private struct CompassButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let heading = model.heading
-        Button {
-            withAnimation(.smooth) { model.faceNorth() }
-        } label: {
-            ZStack {
-                Image(systemName: "location.north.fill")
-                    .font(.title3)
-                    .foregroundStyle(.red)
-                    .rotationEffect(.degrees(-heading))
-                Text("N")
-                    .font(.system(size: 9, weight: .heavy))
-                    .offset(y: -19)
-                    .rotationEffect(.degrees(-heading))
-            }
-            .frame(width: 52, height: 52)
+        GlassCircleButton(title: "Compass. Tap to face north.",
+                          action: { withAnimation(.smooth) { model.faceNorth() } }) {
+            CompassNeedle()
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
-        .accessibilityLabel("Compass, heading \(Int(heading.rounded())) degrees. Tap to face north.")
+    }
+}
+
+/// Needle pointing north on screen.
+private struct CompassNeedle: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let heading = model.heading
+        ZStack {
+            Image(systemName: "location.north.fill")
+                .font(.title3)
+                .foregroundStyle(.red)
+            Text("N")
+                .font(.system(size: 9, weight: .heavy))
+                .offset(y: -19)
+        }
+        .rotationEffect(.degrees(-heading))
+        .accessibilityValue("heading \(Int(heading.rounded())) degrees")
     }
 }
