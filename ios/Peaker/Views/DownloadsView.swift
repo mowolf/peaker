@@ -1,7 +1,7 @@
 import PeakerKit
 import SwiftUI
 
-/// Offline maps: installed packs and the catalog of downloadable countries.
+/// Offline data: installed packs and the catalog of downloadable countries.
 struct DownloadsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -23,7 +23,7 @@ struct DownloadsView: View {
             }
             .searchable(text: $search, prompt: "Search countries")
             .refreshable { await model.packs.refreshCatalog() }
-            .navigationTitle("Offline maps")
+            .navigationTitle("Offline data")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

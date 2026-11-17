@@ -25,6 +25,8 @@ final class HorizonStore {
     private(set) var observerGround: Double?
     private(set) var horizon: HorizonResult?
     private(set) var visiblePeaks: [VisiblePeak] = []
+    /// The summit the viewpoint is on, if any (see `PeakInfo.summit(at:ground:in:)`).
+    private(set) var summit: PeakInfo?
     private(set) var isComputing = false
     /// No elevation data at the viewpoint (pack not downloaded).
     private(set) var noDataHere = false
@@ -76,12 +78,14 @@ final class HorizonStore {
             observerGround = output.ground
             horizon = output.horizon
             visiblePeaks = output.visible
+            summit = output.summit
             refreshSun(force: true)
         } else {
             noDataHere = true
             observerGround = nil
             horizon = nil
             visiblePeaks = []
+            summit = nil
             sunDay = nil
         }
     }
@@ -109,7 +113,9 @@ final class HorizonStore {
         var ground: Double
         var horizon: HorizonResult
         var visible: [VisiblePeak]
+        var summit: PeakInfo?
     }
+
 
     nonisolated private static func compute(_ request: Request, packs: PackSnapshot, loader: TileLoader) async -> Output? {
         let target = request.viewpoint
@@ -128,6 +134,7 @@ final class HorizonStore {
         guard let ground = terrain.height(latitude: target.latitude, longitude: target.longitude) else { return nil }
         let horizon = HorizonEngine.compute(observer: target, observerHeight: Double(ground) + request.eyeHeight,
                                             terrain: terrain, settings: settings)
-        return Output(ground: Double(ground), horizon: horizon, visible: horizon.visiblePeaks(peaks))
+        return Output(ground: Double(ground), horizon: horizon, visible: horizon.visiblePeaks(peaks),
+                      summit: PeakInfo.summit(at: target, ground: Double(ground), in: peaks))
     }
 }

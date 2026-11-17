@@ -83,6 +83,18 @@ public struct PeakInfo: Sendable, Identifiable, Hashable {
         return name
     }
 
+    /// The peak the viewpoint is on: the closest within `radius` metres horizontally whose height (if known) is
+    /// within `heightTolerance` of the ground there, i.e. standing on it rather than in a valley below it.
+    public static func summit(at viewpoint: GeoCoordinate, ground: Double, in peaks: [PeakInfo],
+                              radius: Double = 150, heightTolerance: Double = 80) -> PeakInfo? {
+        peaks
+            .map { ($0, Geo.distance(viewpoint, $0.coordinate)) }
+            .filter { peak, distance in
+                distance <= radius && abs((peak.elevation ?? ground) - ground) <= heightTolerance
+            }
+            .min { $0.1 < $1.1 }?.0
+    }
+
     /// True if the text only uses Latin letters (incl. accents), digits and common punctuation.
     public static func isLatinScript(_ text: String) -> Bool {
         text.unicodeScalars.allSatisfy { s in

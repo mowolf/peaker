@@ -4,11 +4,19 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var showsOfflineData = false
 
     var body: some View {
         @Bindable var settings = model.settings
         NavigationStack {
             Form {
+                Section {
+                    Button { showsOfflineData = true } label: {
+                        OfflineDataRow()
+                    }
+                    .foregroundStyle(.primary)
+                }
+
                 Section {
                     VStack(alignment: .leading) {
                         LabeledContent("View distance", value: model.settings.distance(settings.maxDistanceKm * 1000))
@@ -64,6 +72,9 @@ struct SettingsView: View {
                     NavigationLink("Data sources & licences") { LicensesView() }
                 }
             }
+            .sheet(isPresented: $showsOfflineData) {
+                DownloadsView()
+            }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -78,6 +89,38 @@ struct SettingsView: View {
         let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
         return "\(v) (\(b))"
+    }
+}
+
+/// "Manage offline data" with what's on the iPhone; opens the offline maps card.
+private struct OfflineDataRow: View {
+    @Environment(AppModel.self) private var model
+
+    private var summary: String {
+        let packs = model.packs
+        let downloaded = packs.installed.filter { !$0.isBundled }.count
+        guard downloaded > 0 else { return "Only the included regions" }
+        let size = ByteCountFormatter.string(fromByteCount: Int64(packs.downloadedBytes), countStyle: .file)
+        return "\(downloaded) \(downloaded == 1 ? "country" : "countries") · \(size)"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.down.circle")
+                .font(.title2)
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Manage offline data")
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .contentShape(.rect)
     }
 }
 

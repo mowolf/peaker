@@ -170,8 +170,6 @@ final class PackStore {
         return PackSnapshot(tileFiles: files, tileFiles30: files30, peakDatabases: dbs, landTiles: catalog?.landTiles())
     }
 
-    func isInstalled(_ code: String) -> Bool { installed.contains { $0.code == code } }
-
     /// Downloaded (not bundled) copy of a country, if any.
     func isDownloaded(_ code: String) -> Bool { installed.contains { $0.code == code && !$0.isBundled } }
 

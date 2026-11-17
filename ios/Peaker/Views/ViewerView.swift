@@ -155,18 +155,10 @@ private struct ViewpointChip: View {
                 }
                 .disabled(model.location.isDenied)
             }
-            Section("Viewpoints") {
-                ForEach(Viewpoint.all) { viewpoint in
-                    Button {
-                        model.choose(viewpoint)
-                    } label: {
-                        Label("\(viewpoint.name) · \(viewpoint.region)", systemImage: "mountain.2.fill")
-                    }
-                }
-            }
+            // Fixed viewpoints are chosen in Settings.
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: model.isUsingDemoViewpoint ? "mountain.2.fill" : "location.fill")
+                Image(systemName: model.isOnSummit ? "mountain.2.fill" : "location.fill")
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(model.viewpointName)
@@ -203,7 +195,10 @@ private struct StatusBanner: View {
     var body: some View {
         Group {
             if model.horizonStore.noDataHere {
-                banner(icon: "arrow.down.circle", text: "No offline data here yet. Download this country with the ↓ button.")
+                Button { model.showDownloads = true } label: {
+                    banner(icon: "arrow.down.circle", text: "No offline data here yet. Tap to download this country.")
+                }
+                .buttonStyle(PressScaleStyle())
             } else if let h = model.horizonStore.horizon, h.missingFraction > 0.25 {
                 banner(icon: "square.dashed", text: "Part of the view is outside the offline data.")
             } else if model.isFollowingDevice && model.motion.isCompassUncertain {
@@ -225,6 +220,7 @@ private struct StatusBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .contentShape(.rect(cornerRadius: 20))
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }
@@ -254,18 +250,13 @@ private struct CalibrationHint: View {
 
 // MARK: - Bottom controls
 
-/// Gyro (automatic direction) and camera toggles on the left; settings, downloads and compass on the right.
+/// Gyro (automatic direction) and camera toggles on the left, settings (with offline data) on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 12) {
-            GlassEffectContainer(spacing: 16) {
-                controls
-            }
-            // Outside the container: its needle changes every frame while following the phone, and
-            // nothing that redraws at 60 Hz should share a glass container with the other buttons.
-            CompassButton()
+        GlassEffectContainer(spacing: 16) {
+            controls
         }
     }
 
@@ -286,10 +277,6 @@ private struct ControlBar: View {
 
             GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
                 Image(systemName: "gearshape").font(.title3)
-            }
-
-            GlassCircleButton(title: "Offline maps", action: { model.showDownloads = true }) {
-                Image(systemName: "arrow.down.circle").font(.title3)
             }
         }
         .animation(.smooth, value: model.isFollowingDevice)
@@ -342,39 +329,5 @@ private struct ToggleButton: View {
                 .foregroundStyle(isOn ? Color.white : Color.primary)
         }
         .accessibilityAddTraits(isOn ? .isSelected : [])
-    }
-}
-
-/// Compass button: tap to look north (and stop following the phone).
-///
-/// The button itself doesn't read the heading, so it isn't rebuilt on every motion update (60 Hz) and a tap
-/// isn't interrupted; only the needle inside redraws.
-private struct CompassButton: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        GlassCircleButton(title: "Compass. Tap to face north.",
-                          action: { withAnimation(.smooth) { model.faceNorth() } }) {
-            CompassNeedle()
-        }
-    }
-}
-
-/// Needle pointing north on screen.
-private struct CompassNeedle: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let heading = model.heading
-        ZStack {
-            Image(systemName: "location.north.fill")
-                .font(.title3)
-                .foregroundStyle(.red)
-            Text("N")
-                .font(.system(size: 9, weight: .heavy))
-                .offset(y: -19)
-        }
-        .rotationEffect(.degrees(-heading))
-        .accessibilityValue("heading \(Int(heading.rounded())) degrees")
     }
 }

@@ -62,7 +62,4 @@ public struct TerrainModel: Sendable {
         }
         return status[i] == .ocean ? 0 : nil
     }
-
-    public var loadedTileCount: Int { status.filter { $0 == .loaded }.count }
-    public var missingTileCount: Int { status.filter { $0 == .missing }.count }
 }

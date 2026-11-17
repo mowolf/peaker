@@ -144,11 +144,15 @@ struct PanoramaView: View {
         var path = Path()
         var started = false
         let step: CGFloat = 3
-        var x: CGFloat = 0
+        // Columns well beyond both screen edges: while the phone is rolled (e.g. swung quickly sideways) the
+        // skyline points of the edge columns land inside the screen, and a fill ending there left a light
+        // wedge of sky at the side.
+        let overscan: CGFloat = Swift.max(size.width, size.height) / 2
+        var x: CGFloat = -overscan
         // Far below the screen, so the fill also covers the corners while the phone is rolled.
         let bottom: CGFloat = 2 * Swift.max(size.width, size.height)
         var lastX: CGFloat = 0
-        while x <= size.width + step {
+        while x <= size.width + overscan {
             let az = pose.direction(x: Double(x), y: pose.centerY).azimuthAltitude.azimuth
             let alt = horizon.skylineAltitude(azimuth: az)
             if let p = pose.project(azimuth: az, altitude: alt) {
@@ -257,7 +261,7 @@ struct PanoramaView: View {
         return f
     }()
 
-    /// Sun path (dashed, only where it's above the terrain), hour marks, the sun now, and where it rises and
+    /// Sun path (only where it's above the terrain), hour marks, the sun now, and where it rises and
     /// sets behind the mountains with times.
     private func drawSun(_ context: inout GraphicsContext, day: Sun.Day, horizon: HorizonResult, pose: CameraPose,
                          size: CGSize) {
@@ -286,8 +290,10 @@ struct PanoramaView: View {
                 context.draw(hour, at: CGPoint(x: pt.x, y: pt.y - 10))
             }
         }
-        context.stroke(path, with: .color(sunColor.opacity(0.7)),
-                       style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [5, 4]))
+        // Solid: a dash pattern starts wherever the visible part of the path starts, so the dashes seemed to
+        // crawl along the line whenever the view moved.
+        context.stroke(path, with: .color(sunColor.opacity(0.55)),
+                       style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
 
         // Sun now: a glowing disc, faded when it is behind the mountains or below the horizon.
         let now = Sun.position(at: Date(), coordinate: horizon.observer)

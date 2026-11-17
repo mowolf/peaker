@@ -45,3 +45,17 @@ private let all = [ch, at, li, it, de, np]
                                              in: all, viewDistance: 100_000)
     #expect(unknown.here == nil && unknown.nearby.isEmpty)
 }
+
+@Test func summitUnderTheViewpoint() {
+    let top = GeoCoordinate(latitude: 46.5585, longitude: 7.9813)
+    let jungfrau = PeakInfo(id: "j", name: "Jungfrau", coordinate: top, elevation: 4158, importance: 1)
+    let nearby = PeakInfo(id: "n", name: "Nearby", coordinate: Geo.destination(from: top, bearing: 90, distance: 120),
+                          elevation: 4120, importance: 0.5)
+    let atTop = Geo.destination(from: top, bearing: 0, distance: 40)
+    #expect(PeakInfo.summit(at: atTop, ground: 4150, in: [nearby, jungfrau])?.id == "j")  // closest wins
+    // 400 m below the summit (e.g. a hut on the flank): not "on" it.
+    #expect(PeakInfo.summit(at: atTop, ground: 3750, in: [jungfrau]) == nil)
+    // Too far away horizontally.
+    #expect(PeakInfo.summit(at: Geo.destination(from: top, bearing: 0, distance: 300), ground: 4150,
+                            in: [jungfrau]) == nil)
+}
