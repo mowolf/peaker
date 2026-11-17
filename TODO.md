@@ -100,7 +100,8 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
   - `TerrainKit` — tile loading and caching, height sampling, horizon computation
   - `PeakStore` — SQLite access (e.g. GRDB), spatial queries
   - `PeakerApp` — SwiftUI UI
-- [x] **A-2** *(ios.yml: package tests + simulator build on macos-26, TestFlight upload; no SwiftLint yet)* CI: build + unit tests on GitHub Actions macOS runners; SwiftLint/SwiftFormat.
+- [x] **A-2** *(ios.yml: package tests + simulator build on macos-26, TestFlight upload; no SwiftLint yet.
+      Paused: the private repo's Actions minutes are used up — build locally or on a self-hosted runner)* CI: build + unit tests on GitHub Actions macOS runners; SwiftLint/SwiftFormat.
 - [x] **A-3** App navigation: Viewer (main), Map/Location, Downloads, Settings/Attribution.
 - [x] **A-4** Permissions with clear usage texts: location (when in use), camera, motion.
 - [x] **A-5** Settings: units (m/ft), label density, max distance, eye height, language for peak names.
@@ -152,16 +153,23 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [ ] **O-2** Suggest the current country (reverse geocode the GPS position) and neighbouring countries for views across borders.
 - [x] **O-3** *(foreground async downloads with progress; true background session still open)* Background `URLSession` downloads: resumable, progress per country, Wi-Fi-only option / cellular warning.
 - [x] **O-4** Verify SHA-256, then move tiles into Application Support (`isExcludedFromBackup = true`).
-- [x] **O-5** Shared tile store with reference counting, so deleting a country only removes tiles no other installed pack uses.
+- [x] **O-5** *(TileLedger: also protects tiles of running downloads; unused tiles removed at launch)* Shared tile
+      store with reference counting, so deleting a country only removes tiles no other installed pack uses.
 - [x] **O-6** Storage overview (used space per country) and delete.
-- [ ] **O-7** Dataset updates: compare versions and download only changed files (mostly the peak DBs).
+- [ ] **O-7** *(partly: stored tiles have recorded checksums, so a changed tile is downloaded again when a pack
+      is installed; no update check for installed packs / peak DBs yet)* Dataset updates: compare versions and
+      download only changed files (mostly the peak DBs).
 - [x] **O-8** Handle a missing pack gracefully: show "download Switzerland to see peaks here" instead of an empty screen.
 
 ## Milestone 9 — V1 polish & release
 
 - [ ] **V-1** Onboarding (permissions, first download).
 - [x] **V-2** Attribution/licenses screen (required by Copernicus and OSM).
-- [ ] **V-3** Performance: battery use, thermals, memory with large packs.
+- [ ] **V-3** *(partly: 30 m decode memory −35 %, label data built once per result, no redraws from unchanged
+      sensor values; still to measure on a device with Instruments)* Performance: battery use, thermals, memory
+      with large packs.
+- [ ] **V-7** *(services/stores/AppModel already Swift 6-clean; strict checking on as warnings)* Switch the app to
+      Swift 6 language mode once an Xcode build shows no concurrency warnings.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
 - [ ] **V-6** App icon, screenshots, privacy policy, TestFlight beta, App Store submission.

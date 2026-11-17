@@ -246,8 +246,8 @@ final class PackStore {
             finishInstall(pack)
         } catch {
             downloads[entry.code]?.error = error.localizedDescription
-            // Tiles fetched so far stay on disk (with their checksums), so trying again resumes. If the user
-            // gives up, they are unused and get removed at the next launch.
+            // Tiles fetched so far stay on disk (with their checksums), so trying again right away resumes.
+            // Unused, they are removed at the next launch or after the next completed install.
             reserved[entry.code] = nil
             saveChecksums()
         }
