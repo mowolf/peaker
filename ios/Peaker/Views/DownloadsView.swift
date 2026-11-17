@@ -7,8 +7,8 @@ struct DownloadsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
 
+    // Sections are separate properties: one big body took Xcode > 300 ms to type-check.
     var body: some View {
-        let packs = model.packs
         NavigationStack {
             List {
                 if let here = suggestion {
@@ -16,60 +16,69 @@ struct DownloadsView: View {
                         CountryRow(entry: here)
                     }
                 }
-
-                Section {
-                    ForEach(packs.installed) { pack in
-                        InstalledRow(pack: pack)
-                            .swipeActions {
-                                if !pack.isBundled {
-                                    Button("Delete", systemImage: "trash", role: .destructive) {
-                                        withAnimation { packs.remove(pack.code) }
-                                    }
-                                }
-                            }
-                    }
-                } header: {
-                    Text("On this iPhone")
-                } footer: {
-                    if packs.downloadedBytes > 0 {
-                        Text("\(ByteCountFormatter.string(fromByteCount: Int64(packs.downloadedBytes), countStyle: .file)) used")
-                    }
-                }
-
-                if packs.baseURL == nil {
-                    Section {
-                        ContentUnavailableView("Downloads aren't set up",
-                                               systemImage: "icloud.slash",
-                                               description: Text("This build has no data server configured. The regions marked \"Included\" work offline."))
-                    }
-                } else if let error = packs.catalogError, packs.catalog == nil {
-                    Section {
-                        ContentUnavailableView {
-                            Label("Couldn't load countries", systemImage: "wifi.exclamationmark")
-                        } description: {
-                            Text(error)
-                        } actions: {
-                            Button("Try again") { Task { await packs.refreshCatalog() } }
-                                .buttonStyle(.glassProminent)
-                        }
-                    }
-                } else if packs.catalog == nil {
-                    Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else {
-                    Section("Countries") {
-                        ForEach(filtered) { entry in
-                            CountryRow(entry: entry)
-                        }
-                    }
-                }
+                installedSection
+                catalogSection
             }
             .searchable(text: $search, prompt: "Search countries")
-            .refreshable { await packs.refreshCatalog() }
+            .refreshable { await model.packs.refreshCatalog() }
             .navigationTitle("Offline maps")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", systemImage: "checkmark", role: .confirm) { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var installedSection: some View {
+        let packs = model.packs
+        return Section {
+            ForEach(packs.installed) { pack in
+                InstalledRow(pack: pack)
+                    .swipeActions {
+                        if !pack.isBundled {
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                withAnimation { packs.remove(pack.code) }
+                            }
+                        }
+                    }
+            }
+        } header: {
+            Text("On this iPhone")
+        } footer: {
+            if packs.downloadedBytes > 0 {
+                Text("\(ByteCountFormatter.string(fromByteCount: Int64(packs.downloadedBytes), countStyle: .file)) used")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var catalogSection: some View {
+        let packs = model.packs
+        if packs.baseURL == nil {
+            Section {
+                ContentUnavailableView("Downloads aren't set up",
+                                       systemImage: "icloud.slash",
+                                       description: Text("This build has no data server configured. The regions marked \"Included\" work offline."))
+            }
+        } else if let error = packs.catalogError, packs.catalog == nil {
+            Section {
+                ContentUnavailableView {
+                    Label("Couldn't load countries", systemImage: "wifi.exclamationmark")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try again") { Task { await packs.refreshCatalog() } }
+                        .buttonStyle(.glassProminent)
+                }
+            }
+        } else if packs.catalog == nil {
+            Section { HStack { Spacer(); ProgressView(); Spacer() } }
+        } else {
+            Section("Countries") {
+                ForEach(filtered) { entry in
+                    CountryRow(entry: entry)
                 }
             }
         }
@@ -159,10 +168,20 @@ private struct CountryRow: View {
                 Text(state.fraction, format: .percent.precision(.fractionLength(0)))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                Button {
+                    packs.cancelInstall(entry.code)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Cancel download of \(entry.name)")
             } else {
                 Button {
                     packs.clearError(entry.code)
-                    Task { await packs.install(entry) }
+                    packs.startInstall(entry)
                 } label: {
                     Image(systemName: state?.error == nil ? "arrow.down" : "arrow.clockwise")
                         .font(.body.weight(.semibold))

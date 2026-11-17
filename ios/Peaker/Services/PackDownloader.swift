@@ -4,6 +4,7 @@ import PeakerKit
 
 enum PackError: LocalizedError {
     case noServer, badResponse(Int), checksumMismatch(String), decompressionFailed
+    case notEnoughSpace(needed: Int64, available: Int64)
 
     var errorDescription: String? {
         switch self {
@@ -11,7 +12,13 @@ enum PackError: LocalizedError {
         case .badResponse(let code): "The server answered with HTTP \(code)."
         case .checksumMismatch(let file): "\(file) was damaged during download. Please try again."
         case .decompressionFailed: "The peak database could not be unpacked."
+        case .notEnoughSpace(let needed, let available):
+            "Not enough free space: the download needs \(Self.size(needed)), \(Self.size(available)) are free."
         }
+    }
+
+    private static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 

@@ -4,8 +4,9 @@ import PeakerKit
 
 /// What the viewer shows for the current viewpoint: horizon and ridges, visible peaks, and the sun's day.
 ///
-/// Computes in the background. GPS updates arrive about once a second and a computation with 30 m terrain
-/// can take longer, so only the newest computation's result is applied.
+/// Computes in the background, one computation at a time. While one runs, newer requests are coalesced:
+/// only the latest waits and runs next (moving in a car or train would otherwise start a new full sweep every
+/// few seconds while older ones are still busy).
 @MainActor
 @Observable
 final class HorizonStore {
@@ -36,26 +37,38 @@ final class HorizonStore {
     @ObservationIgnored private let policy = RecomputePolicy()
     @ObservationIgnored private var computedFor: Request?
     @ObservationIgnored private let tileLoader = TileLoader()
-    /// Increases with every computation started.
-    @ObservationIgnored private var generation = 0
+    /// A computation is running; new requests go to `pending`.
+    @ObservationIgnored private var isRunning = false
+    /// The latest request that arrived while computing (older ones are dropped).
+    @ObservationIgnored private var pending: (request: Request, packs: PackSnapshot)?
 
     /// Recompute when the viewpoint moved > 75 m or became much more accurate, or any other input changed.
+    /// Returns once the request's result is shown, or right away if it was queued behind a running one.
     func update(_ request: Request, packs: @autoclosure () -> PackSnapshot, force: Bool = false) async {
         if !force, let last = computedFor, !needsRecompute(from: last, to: request) { return }
         computedFor = request
-        generation += 1
-        let mine = generation
         isComputing = true
-
-        let snapshot = packs()
-        let loader = tileLoader
-        let output = await Task.detached(priority: .userInitiated) {
-            await Self.compute(request, packs: snapshot, loader: loader)
-        }.value
-
-        // A newer computation started meanwhile: its result wins, don't show this older one.
-        guard mine == generation else { return }
+        if isRunning {
+            pending = (request, packs())
+            return
+        }
+        isRunning = true
+        var next: (request: Request, packs: PackSnapshot)? = (request, packs())
+        while let job = next {
+            pending = nil
+            let loader = tileLoader
+            let output = await Task.detached(priority: .userInitiated) {
+                await Self.compute(job.request, packs: job.packs, loader: loader)
+            }.value
+            // Always newer than what's on screen, so show it even if another request is waiting.
+            apply(output, for: job.request)
+            next = pending
+        }
+        isRunning = false
         isComputing = false
+    }
+
+    private func apply(_ output: Output?, for request: Request) {
         resultID += 1
         observer = request.viewpoint
         if let output {
