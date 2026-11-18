@@ -6,7 +6,7 @@ struct PeakerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ViewerView()
+            RootView()
                 .environment(model)
                 .preferredColorScheme(.dark)
                 .task { await model.start() }

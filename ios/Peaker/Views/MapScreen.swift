@@ -8,13 +8,11 @@ import UIKit
 /// Zoomed out past the flat map's range it becomes a globe of the whole Earth.
 struct MapScreen: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     @State private var dragStart: MapCamera?
     @State private var globeDragStart: GlobeCamera?
     /// Zoom value (flat: distance; globe: altitude) and magnification when the pinch started or changed mode.
     @State private var pinchBase: (value: Float, magnification: CGFloat)?
     @State private var rotateStart: Float?
-    @State private var selected: VisiblePeak?
     @State private var showsSearch = false
     @State private var labelMemory = MapLabelMemory()
 
@@ -38,6 +36,7 @@ struct MapScreen: View {
                 .simultaneousGesture(pinchGesture)
                 .simultaneousGesture(rotateGesture)
                 .onTapGesture(coordinateSpace: .local) { point in
+                    model.map.stopCinematic()
                     if let hit = labels.first(where: { $0.frame.insetBy(dx: -8, dy: -8).contains(point) }) {
                         select(hit.peak)
                     }
@@ -45,19 +44,19 @@ struct MapScreen: View {
             }
         }
         .ignoresSafeArea()
-        .overlay(alignment: .top) { MapTopControls(onClose: { dismiss() }) }
+        .overlay(alignment: .top) { MapTopControls() }
         .overlay(alignment: .bottom) { MapBottomControls(showsSearch: $showsSearch) }
-        .sheet(item: $selected) { peak in
-            PeakDetailView(visible: peak)
-                .presentationDetents([.height(420), .large])
-        }
         .sheet(isPresented: $showsSearch) {
             PeakPickerView(title: "Find on map", allowsTypedName: false) { peak in
                 guard let coordinate = peak.coordinate else { return }
                 model.showOnMap(coordinate: coordinate, peakID: peak.id)
             }
         }
-        .task { model.openMapIfNeeded() }
+        // The start view the first time (waits for a position), afterwards just what changed meanwhile.
+        .task {
+            await model.showStartView()
+            refresh()
+        }
         .onChange(of: model.settings.mapStyle) { refresh() }
         .onChange(of: model.settings.mapExaggeration) { refresh() }
         .onChange(of: model.packs.version) { refresh() }
@@ -83,7 +82,7 @@ struct MapScreen: View {
 
     private func select(_ peak: PeakInfo) {
         let from = model.currentViewpoint ?? peak.coordinate
-        selected = VisiblePeak(peak: peak, azimuth: Geo.bearing(from: from, to: peak.coordinate), altitude: 0,
+        model.selectedPeak = VisiblePeak(peak: peak, azimuth: Geo.bearing(from: from, to: peak.coordinate), altitude: 0,
                                distance: Geo.distance(from, peak.coordinate))
     }
 
@@ -93,6 +92,7 @@ struct MapScreen: View {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
                 let map = model.map
+                map.stopCinematic()
                 let dx = Float(value.translation.width), dy = Float(value.translation.height)
                 if map.mode == .globe {
                     let start = globeDragStart ?? map.globe
@@ -124,6 +124,7 @@ struct MapScreen: View {
         MagnifyGesture()
             .onChanged { value in
                 let map = model.map
+                map.stopCinematic()
                 let m = max(0.05, value.magnification)
                 let current = map.mode == .globe ? map.globe.altitude : map.camera.distance
                 let base = pinchBase ?? (current, m)
@@ -161,6 +162,7 @@ struct MapScreen: View {
         RotateGesture()
             .onChanged { value in
                 let map = model.map
+                map.stopCinematic()
                 let start = rotateStart ?? (map.mode == .globe ? map.globe.heading : map.camera.heading)
                 if rotateStart == nil { rotateStart = start }
                 let heading = start - Float(value.rotation.degrees)
@@ -428,13 +430,28 @@ struct MapSceneView: UIViewRepresentable {
 /// Close on the left; 2D/3D, north and "my position" on the right; a note while an area is being built.
 private struct MapTopControls: View {
     @Environment(AppModel.self) private var model
-    let onClose: () -> Void
 
     var body: some View {
-        let map = model.map
+        @Bindable var map = model.map
         HStack(alignment: .top) {
-            GlassCircleButton(title: "Close map", action: onClose) {
-                Image(systemName: "xmark").font(.title3.weight(.semibold))
+            // Settings (leftmost) and which peaks to show, top left.
+            HStack(spacing: 10) {
+                GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                    Image(systemName: "gearshape").font(.title3)
+                }
+                Menu {
+                    Picker("Show", selection: $map.filter) {
+                        ForEach(MapModel.MapFilter.allCases) { Text($0.title).tag($0) }
+                    }
+                } label: {
+                    Image(systemName: map.filter == .all ? "mountain.2" : "book.fill")
+                        .font(.title3)
+                        .frame(width: 52, height: 52)
+                        .contentShape(Circle())
+                        .glassEffect(map.filter == .all ? .regular : .regular.tint(.green), in: .circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(map.filter.title)
             }
             Spacer()
             if map.isBuilding {
@@ -473,6 +490,25 @@ private struct MapTopControls: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
+        .overlay(alignment: .bottom) {
+            if let missing = model.missingCountry, map.mode == .flat {
+                Button { model.showDownloads = true } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.down.circle.fill").font(.title3).foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("\(missing.name) isn't downloaded yet").font(.footnote.weight(.semibold))
+                            Text("Download it to see its mountains in 3D.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .contentShape(.rect(cornerRadius: 20))
+                    .glassEffect(.regular, in: .rect(cornerRadius: 20))
+                }
+                .buttonStyle(PressScaleStyle())
+                .alignmentGuide(.bottom) { $0[.top] - 12 }
+            }
+        }
     }
 
     private func toggleTilt() {
@@ -494,30 +530,15 @@ private struct MapTopControls: View {
     }
 }
 
-/// Search and the peak book filter.
+/// Bottom bar, laid out like the peak finder's: peak book, switch to the peak finder, search.
 private struct MapBottomControls: View {
     @Environment(AppModel.self) private var model
     @Binding var showsSearch: Bool
 
     var body: some View {
-        @Bindable var map = model.map
-        HStack(spacing: 12) {
-            Menu {
-                Picker("Show", selection: $map.filter) {
-                    ForEach(MapModel.MapFilter.allCases) { Text($0.title).tag($0) }
-                }
-            } label: {
-                Label(map.filter.title, systemImage: map.filter == .all ? "mountain.2" : "book")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 16)
-                    .frame(height: 52)
-                    .contentShape(Capsule())
-                    .glassEffect(.regular, in: .capsule)
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            GlassCircleButton(title: "Find a peak", action: { showsSearch = true }) {
-                Image(systemName: "magnifyingglass").font(.title3)
+        ModeBar(onPeakBook: { model.showPeakBook = true }, onSearch: { showsSearch = true }) {
+            GlassCircleButton(title: "Peak finder", glass: .regular.tint(.orange), action: { model.screen = .finder }) {
+                Image(systemName: "binoculars.fill").font(.title3).foregroundStyle(.white)
             }
         }
         .padding(.horizontal, 16)

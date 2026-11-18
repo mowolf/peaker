@@ -146,6 +146,58 @@ final class MapModel {
         return nil
     }
 
+    // MARK: - Cinematic view
+
+    /// The camera slowly circles a summit (start screen). Any touch stops it.
+    private(set) var isCinematic = false
+    @ObservationIgnored private var cinematicTask: Task<Void, Never>?
+
+    /// Circle the summit of `peak` from close by, once around every two minutes.
+    func startCinematic(around peak: PeakInfo, settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        highlightedPeakID = peak.id
+        camera.pitch = 30
+        camera.heading = 200
+        focus(on: peak.coordinate, distance: 7, settings: settings, packs: packs, packVersion: packVersion)
+        // Look at the summit itself, not the ground below the coordinate.
+        if let frame, let elevation = peak.elevation {
+            camera.target.y = frame.point(peak.coordinate, height: elevation).y
+        }
+        isCinematic = true
+        cinematicTask?.cancel()
+        cinematicTask = Task {
+            var last = Date()
+            while !Task.isCancelled, self.isCinematic {
+                try? await Task.sleep(for: .milliseconds(33))
+                let now = Date()
+                var camera = self.camera
+                camera.heading += Float(now.timeIntervalSince(last)) * 3  // degrees per second
+                last = now
+                self.camera = camera.clamped()
+            }
+        }
+    }
+
+    func stopCinematic() {
+        guard isCinematic else { return }
+        isCinematic = false
+        cinematicTask?.cancel()
+        cinematicTask = nil
+    }
+
+    /// Show the globe above a place (no position yet, or no data to show close up).
+    func showGlobe(center: GeoCoordinate, altitude: Float, settings: AppSettings, packs: PackSnapshot,
+                   packVersion: Int) {
+        stopCinematic()
+        globe = GlobeCamera(center: center, altitude: altitude).clamped()
+        mode = .globe
+        buildGlobe(style: settings.mapStyle, packs: packs, packVersion: packVersion)
+    }
+
+    /// The country a coordinate lies in (ISO code), from the shipped outlines; works offline.
+    func countryCode(at coordinate: GeoCoordinate) async -> String? {
+        await loadOutlines()?.country(at: coordinate)
+    }
+
     // MARK: - Globe
 
     /// What the scene's camera does: the flat map's camera, or the globe's.

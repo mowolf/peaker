@@ -34,6 +34,30 @@ enum PeakDatabase {
         return out
     }
 
+    /// The highest peaks (by elevation) inside a box, highest first, de-duplicated across databases. For
+    /// "the country's highest mountain": the caller keeps those inside the country's outline.
+    static func highestPeaks(in databases: [URL], box: GeoBox, limit: Int = 30) -> [PeakInfo] {
+        let sql = """
+            SELECT \(columns) FROM peaks_rtree r JOIN peaks p ON p.rowid = r.rowid
+            WHERE r.min_lat <= ? AND r.max_lat >= ? AND r.min_lon <= ? AND r.max_lon >= ? AND p.ele IS NOT NULL
+            ORDER BY p.ele DESC LIMIT \(limit)
+            """
+        var seen = Set<String>()
+        var out: [PeakInfo] = []
+        for url in databases {
+            withStatement(sql, in: url) { stmt in
+                sqlite3_bind_double(stmt, 1, box.north)
+                sqlite3_bind_double(stmt, 2, box.south)
+                sqlite3_bind_double(stmt, 3, box.east)
+                sqlite3_bind_double(stmt, 4, box.west)
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    if let p = peak(stmt), seen.insert(p.id).inserted { out.append(p) }
+                }
+            }
+        }
+        return out.sorted { ($0.elevation ?? 0) > ($1.elevation ?? 0) }
+    }
+
     /// Peaks within `radius` metres of a point (boxes are cheap to query; the distance filter is exact).
     static func peaks(near center: GeoCoordinate, radius: Double, in databases: [URL]) -> [PeakInfo] {
         let dLat = radius / 111_320
