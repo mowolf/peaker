@@ -34,6 +34,8 @@ final class PeakBook {
     private(set) var entries: [StoredEntry] = []
     /// Peak ID → mark, for the viewer labels. Climbed wins over wishlist.
     private(set) var marks: [String: PeakMark] = [:]
+    /// Changes whenever `marks` does (cheap to compare, for caches keyed on the marks).
+    private(set) var marksVersion = 0
     private(set) var isLoaded = false
 
     let folder: URL
@@ -105,7 +107,10 @@ final class PeakBook {
                 }
             }
         }
-        if marks != self.marks { self.marks = marks }
+        if marks != self.marks {
+            self.marks = marks
+            marksVersion += 1
+        }
     }
 
     private static func order(_ a: StoredEntry, _ b: StoredEntry) -> Bool {

@@ -228,10 +228,10 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [x] **B-4** `PeakBook` store (main actor): reads the folder at launch, when the app returns to the foreground and
       when the installed peak data changes; matches entries to peaks off the main thread; writes files atomically.
       No on-disk index: a scan of a few hundred small files takes milliseconds (add one if that changes).
-- [ ] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
+- [x] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
       peak's entries. Climbing a wishlist peak updates its planned entry instead of adding a second file.
-- [ ] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
-- [ ] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
+- [x] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
+- [x] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
 
 ## Milestone 11 — Peak book and diary
 

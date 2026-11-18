@@ -32,6 +32,11 @@ final class AppSettings {
         didSet { defaults.set(allowsMobileDataDownloads, forKey: "allowsMobileDataDownloads") }
     }
 
+    /// "<peak id>|<day>" of the last "Mark as climbed?" prompt the user closed, so it stays closed that day.
+    var dismissedSummitPrompt: String {
+        didSet { defaults.set(dismissedSummitPrompt, forKey: "dismissedSummitPrompt") }
+    }
+
     init() {
         maxDistanceKm = defaults.object(forKey: "maxDistanceKm") as? Double ?? 200
         eyeHeight = defaults.object(forKey: "eyeHeight") as? Double ?? 1.8
@@ -39,6 +44,7 @@ final class AppSettings {
         labelDensity = LabelDensity(rawValue: defaults.string(forKey: "labelDensity") ?? "") ?? .normal
         fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
         allowsMobileDataDownloads = defaults.bool(forKey: "allowsMobileDataDownloads")  // default false
+        dismissedSummitPrompt = defaults.string(forKey: "dismissedSummitPrompt") ?? ""
     }
 
     /// Language for peak names: the device's language (OSM/Wikidata `name:<code>`).

@@ -19,6 +19,8 @@ struct PanoramaView: View {
         var width: Double
         /// Priority before the per-frame stickiness bonus: important and close peaks first.
         var priority: Double
+        /// Climbed or on the wishlist (peak book): a symbol before the name.
+        var mark: PeakMark?
     }
 
     @MainActor
@@ -30,6 +32,7 @@ struct PanoramaView: View {
             var result: Int
             var units: UnitSystem
             var language: String?
+            var marks: Int
         }
         private var entriesKey: EntriesKey?
         private var cachedEntries: [LabelEntry] = []
@@ -49,6 +52,9 @@ struct PanoramaView: View {
 
         private static let nameFont = UIFont.systemFont(ofSize: 13, weight: .semibold)
         private static let detailFont = UIFont.systemFont(ofSize: 11, weight: .regular)
+
+        /// Width of the climbed/wishlist symbol and its space, as drawn in `drawLabels`.
+        static let markWidth = 17.0
 
         /// Width of a label's text as drawn in `drawLabels` (name + " " + detail).
         /// Character counts are far off for non-Latin scripts and wide letters.
@@ -254,7 +260,13 @@ struct PanoramaView: View {
                 context.stroke(background, with: .color(.white.opacity(0.18)), lineWidth: 0.5)
             }
 
-            let title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            if let mark = label.mark {
+                let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "star.fill"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(mark == .climbed ? Color.green : Color.yellow)
+                title = Text("\(symbol) \(title)")
+            }
             let detail = Text(" " + label.detail).font(.system(size: 11, weight: .regular))
                 .foregroundStyle(.white.opacity(label.isTarget ? 0.9 : 0.7))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
@@ -397,6 +409,7 @@ struct PanoramaView: View {
         var summit: CGPoint
         var frame: CGRect
         var isTarget = false
+        var mark: PeakMark?
     }
 
     private func layoutLabels(pose: CameraPose, size: CGSize) -> [PlacedLabel] {
@@ -444,7 +457,7 @@ struct PanoramaView: View {
             let e = entries[i]
             return PlacedLabel(peak: e.visible, name: e.name, detail: e.detail, summit: CGPoint(x: p.summitX, y: p.summitY),
                                frame: CGRect(x: p.x, y: p.y + 2, width: p.width, height: p.height - 4),
-                               isTarget: p.id == targetID)
+                               isTarget: p.id == targetID, mark: e.mark)
         }
     }
 
@@ -452,8 +465,11 @@ struct PanoramaView: View {
     private func labelEntries() -> [LabelEntry] {
         let settings = model.settings
         let store = model.horizonStore
-        let key = LabelMemory.EntriesKey(result: store.resultID, units: settings.units, language: settings.peakLanguage)
+        let book = model.peakBook
+        let key = LabelMemory.EntriesKey(result: store.resultID, units: settings.units, language: settings.peakLanguage,
+                                         marks: book.marksVersion)
         return labelMemory.entries(for: key) {
+            let marks = book.marks
             store.visiblePeaks.map { v in
                 let name = v.peak.displayName(language: key.language)
                 var detailParts: [String] = []
@@ -461,10 +477,12 @@ struct PanoramaView: View {
                 detailParts.append(settings.distance(v.distance))
                 let detail = detailParts.joined(separator: " · ")
                 // The text starts 9 pt into the frame, which is `width + 8` wide (LabelLayout).
+                let mark = marks[v.id]
                 let width = LabelMemory.textWidth(name: name, detail: detail) + 10
+                    + (mark == nil ? 0 : LabelMemory.markWidth)
                 let closeness = 1 - min(1, v.distance / 100_000)
                 return LabelEntry(visible: v, name: name, detail: detail, width: width,
-                                  priority: v.peak.importance + 0.15 * closeness)
+                                  priority: v.peak.importance + 0.15 * closeness, mark: mark)
             }
         }
     }

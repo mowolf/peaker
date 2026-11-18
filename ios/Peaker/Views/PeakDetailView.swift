@@ -22,6 +22,8 @@ struct PeakDetailView: View {
                         }
                     }
 
+                    PeakBookSection(peak: peak)
+
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         if let e = peak.elevation {
                             Stat(title: "Elevation", value: settings.elevation(e), icon: "mountain.2")
