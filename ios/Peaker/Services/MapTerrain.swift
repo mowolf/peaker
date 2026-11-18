@@ -6,8 +6,8 @@ import PeakerKit
 ///
 /// Two levels share one scene frame:
 /// - `detail`: 40 km around the view from the full-resolution tiles (30 m where downloaded);
-/// - `regional`: up to 320 km from the 90 m tiles, with the world around the downloaded data: countries without
-///   data in black, sea, lakes, borders.
+/// - `regional`: 80–2,000 km, from the 90 m tiles up to 320 km and from smaller versions of them beyond, with
+///   the world around the downloaded data: countries without data in black, sea, lakes, borders.
 struct MapTerrain: Sendable {
     /// Finest first.
     enum Level: Sendable, CaseIterable { case detail, regional }
@@ -41,7 +41,10 @@ struct MapTerrain: Sendable {
 
     static let detailSize = 40_000.0
 
-    static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader,
+    /// Up to this size (metres) the regional layer uses the full 90 m tiles.
+    static let fullResolutionSize = 320_000.0
+
+    static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader, overview: OverviewTiles,
                       outlines: CountryOutlines?) async -> MapTerrain? {
         let center = request.center
         let ids = TileID.covering(center: center, radius: request.size * 0.75)
@@ -55,12 +58,18 @@ struct MapTerrain: Sendable {
             tiles = await loader.tiles(ids, near: Set(ids), files: packs.tileFiles, files30: packs.tileFiles30,
                                        peaks: peaks, version: request.packVersion)
             meshSamples = 513
-        case .regional:
+        case .regional where request.size <= Self.fullResolutionSize:
             // All peaks for the summit heights burned into the tiles; labels use the important ones.
             let all = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes)
             tiles = await loader.tiles(ids, near: [], files: packs.tileFiles, files30: packs.tileFiles30,
                                        peaks: all, version: request.packVersion)
             peaks = Array(all.sorted { $0.importance > $1.importance }.prefix(1500))
+            meshSamples = 641
+        case .regional:
+            // Larger squares from smaller versions of the 90 m tiles, matched to what a texture pixel covers
+            // (~270 m up to 800 km, ~540 m beyond): the full tiles of such an area would not fit in memory.
+            peaks = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes, limit: 1500)
+            tiles = await overview.tiles(ids, files: packs.tileFiles, step: request.size <= 800_000 ? 3 : 6)
             meshSamples = 641
         }
         // Stop early when a newer request replaced this one (checked between the expensive steps).
@@ -144,7 +153,7 @@ enum WorldImage {
         for start in stride(from: 0, to: ids.count, by: 200) {
             if Task.isCancelled { return nil }
             let batch = Array(ids[start..<min(ids.count, start + 200)])
-            for (id, tile) in await overview.tiles(batch, files: packs.tileFiles) {
+            for (id, tile) in await overview.tiles(batch, files: packs.tileFiles, step: OverviewTiles.globeStep) {
                 let c0 = Int((Double(id.lon) + 180) / 360 * Double(w)), c1 = Int((Double(id.lon + 1) + 180) / 360 * Double(w))
                 let r0 = Int((90 - Double(id.lat + 1)) / 180 * Double(h)), r1 = Int((90 - Double(id.lat)) / 180 * Double(h))
                 for r in max(0, r0)..<min(h, r1) {

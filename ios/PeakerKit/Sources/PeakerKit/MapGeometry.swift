@@ -112,7 +112,7 @@ public struct MapCamera: Sendable, Equatable {
 
     public static let pitchRange: ClosedRange<Float> = 25...90
     /// Beyond the farthest distance the map becomes the globe.
-    public static let distanceRange: ClosedRange<Float> = 1.5...160
+    public static let distanceRange: ClosedRange<Float> = 1.5...800
 
     /// Flattest allowed view at a distance: zoomed far out the view looks down more, so it shows the country
     /// rather than the horizon beyond the loaded area.

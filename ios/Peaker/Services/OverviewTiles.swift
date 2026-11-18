@@ -1,17 +1,26 @@
 import Foundation
 import PeakerKit
 
-/// ~700 m versions of the downloaded 90 m tiles (151 × 151 samples instead of 1201 × 1201), for the zoomed-out map.
+/// Smaller versions of the downloaded 90 m tiles for the zoomed-out map and the globe: every `step`-th sample
+/// (step 3: ~270 m, 401 × 401; step 6: ~540 m; step 8: ~700 m, 151 × 151).
 ///
-/// Made once per tile from its 90 m file and kept in Caches (45 KB each; the system may clear them, they are
-/// remade), and the most recently used ~900 in memory. A whole country then loads in moments instead of
+/// Made once per tile and step from its 90 m file and kept in Caches (the system may clear them, they are
+/// remade), and the most recently used in memory (up to ~50 MB). A large area then loads in moments instead of
 /// decoding hundreds of megabytes.
 actor OverviewTiles {
-    static let step = 8
-    private static let memoryCapacity = 900
+    /// For the globe's world image.
+    static let globeStep = 8
+    /// Samples kept in memory at most (2 bytes each).
+    private static let memoryCapacity = 25_000_000
 
-    private var memory: [TileID: ElevationTile] = [:]
-    private var lastUse: [TileID: Int] = [:]
+    private struct Key: Hashable {
+        var id: TileID
+        var step: Int
+    }
+
+    private var memory: [Key: ElevationTile] = [:]
+    private var lastUse: [Key: Int] = [:]
+    private var samplesInMemory = 0
     private var clock = 0
     private let directory: URL
 
@@ -21,15 +30,15 @@ actor OverviewTiles {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    /// Overview tiles for those of `ids` that are downloaded (`files`: the 90 m tile files).
-    func tiles(_ ids: [TileID], files: [TileID: URL]) async -> [TileID: ElevationTile] {
+    /// Smaller tiles for those of `ids` that are downloaded (`files`: the 90 m tile files).
+    func tiles(_ ids: [TileID], files: [TileID: URL], step: Int) async -> [TileID: ElevationTile] {
         var out: [TileID: ElevationTile] = [:]
         var missing: [(TileID, URL)] = []
         for id in ids {
             guard let url = files[id] else { continue }
-            if let tile = memory[id] {
+            if let tile = memory[Key(id: id, step: step)] {
                 out[id] = tile
-                touch(id)
+                touch(Key(id: id, step: step))
             } else {
                 missing.append((id, url))
             }
@@ -40,16 +49,18 @@ actor OverviewTiles {
             var pending = missing.makeIterator()
             for _ in 0..<window {
                 guard let (id, url) = pending.next() else { break }
-                group.addTask { (id, Self.load(id, from: url, cache: directory)) }
+                group.addTask { (id, Self.load(id, from: url, step: step, cache: directory)) }
             }
             while let (id, tile) = await group.next() {
                 if let tile {
-                    memory[id] = tile
-                    touch(id)
+                    let key = Key(id: id, step: step)
+                    if memory[key] == nil { samplesInMemory += tile.heights.count }
+                    memory[key] = tile
+                    touch(key)
                     out[id] = tile
                 }
                 if let (next, url) = pending.next() {
-                    group.addTask { (next, Self.load(next, from: url, cache: directory)) }
+                    group.addTask { (next, Self.load(next, from: url, step: step, cache: directory)) }
                 }
             }
         }
@@ -57,23 +68,24 @@ actor OverviewTiles {
         return out
     }
 
-    private func touch(_ id: TileID) {
+    private func touch(_ key: Key) {
         clock += 1
-        lastUse[id] = clock
+        lastUse[key] = clock
     }
 
     /// Least recently used first, down to the capacity.
     private func evict() {
-        guard memory.count > Self.memoryCapacity else { return }
-        let drop = memory.count - Self.memoryCapacity
-        for (id, _) in lastUse.sorted(by: { $0.value < $1.value }).prefix(drop) {
-            memory[id] = nil
-            lastUse[id] = nil
+        guard samplesInMemory > Self.memoryCapacity else { return }
+        for (key, _) in lastUse.sorted(by: { $0.value < $1.value }) {
+            guard samplesInMemory > Self.memoryCapacity else { break }
+            samplesInMemory -= memory[key]?.heights.count ?? 0
+            memory[key] = nil
+            lastUse[key] = nil
         }
     }
 
     /// From the cache file if it matches the source file, else decoded from the 90 m tile and cached.
-    nonisolated private static func load(_ id: TileID, from url: URL, cache: URL) -> ElevationTile? {
+    nonisolated private static func load(_ id: TileID, from url: URL, step: Int, cache: URL) -> ElevationTile? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         let modified = Int((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)

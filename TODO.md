@@ -277,8 +277,8 @@ tints, hill shading and contour lines; no roads or towns. Flat map = the same sc
       others black, borders); zooming in below 350 km returns to the flat map there.
 - [x] **M-7d** Water clearly apart from land (teal sea in Dusk, coastline, Natural Earth lakes); a regional layer
       (up to 240 km from the 90 m tiles) between detail and overview; peak book markers on the map and the globe.
-- [x] **M-7e** Two layers only (the ~700 m overview looked rough): detail + regional (80–320 km from the 90 m
-      tiles); the globe from 160 km.
+- [x] **M-7e** Two layers only (the ~700 m overview looked rough): detail + regional (80–2,000 km: the 90 m tiles
+      up to 320 km, ~270 m / ~540 m versions beyond); the flat map zooms out to 800 km, then the globe.
 - [ ] **M-7c** Measure on a device: build times, memory, frame rate.
 - [ ] **M-8** Map polish: two-finger tilt, smooth camera moves, a base/skirt under the area's edges, fog.
 
