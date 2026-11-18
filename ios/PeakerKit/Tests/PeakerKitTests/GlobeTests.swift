@@ -61,8 +61,8 @@ struct GlobeTests {
             let i = (Int(90 - lat) * width + Int(180 + lon)) * 4
             return Array(px[i..<(i + 3)])
         }
-        #expect(color(10, -30) == [7, 20, 61])  // Atlantic: sea
+        #expect(color(10, -30) == [0, 76, 96])  // Atlantic: sea (0.00, 0.30, 0.38)
         #expect(color(20, 20) == [0, 0, 0])  // Sahara (no data): black land
-        #expect(color(46.5, 7.5) != [0, 0, 0] && color(46.5, 7.5) != [7, 20, 61])  // the downloaded pixel
+        #expect(color(46.5, 7.5) != [0, 0, 0] && color(46.5, 7.5) != [0, 76, 96])  // the downloaded pixel
     }
 }

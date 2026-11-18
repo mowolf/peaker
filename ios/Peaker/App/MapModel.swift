@@ -6,20 +6,25 @@ import RealityKit
 
 /// The 3D map's state: camera, the terrain layers and their RealityKit models, and what to highlight.
 ///
-/// Two layers in one scene frame: an overview sized to the zoom (120 km to 1,800 km, from ~700 m overview tiles,
-/// with countries without data in black) and, closer than 70 km, a detailed 40 km square on top of it, which
-/// cuts a hole into the overview. Both are rebuilt around the view in the background when it moves or zooms
-/// far enough; nothing is swapped until the new layer is ready.
+/// Three layers in one scene frame, finest on top, each cutting a hole into the coarser ones under it:
+/// - detail: 40 km at full resolution (30 m where downloaded), closer than 70 km;
+/// - regional: up to 240 km from the 90 m tiles, closer than 130 km;
+/// - overview: sized to the zoom (120 km to 1,800 km) from ~700 m overview tiles, with countries without data
+///   in black.
+/// All are rebuilt around the view in the background when it moves or zooms far enough; nothing is swapped
+/// until the new layer is ready.
 @MainActor
 @Observable
 final class MapModel {
     var camera = MapCamera(target: .zero, distance: 16, heading: 0, pitch: 55)
     private(set) var frame: MapFrame?
-    private(set) var detail: MapTerrain?
-    private(set) var overview: MapTerrain?
-    private(set) var detailEntity: ModelEntity?
-    private(set) var overviewEntity: ModelEntity?
+    /// Built layers and their models, by level.
+    private(set) var terrains: [MapTerrain.Level: MapTerrain] = [:]
+    private(set) var entities: [MapTerrain.Level: ModelEntity] = [:]
     private(set) var isBuilding = false
+
+    var detail: MapTerrain? { terrains[.detail] }
+    var overview: MapTerrain? { terrains[.overview] }
     /// Peak to highlight (search result, "Show on map").
     var highlightedPeakID: String?
     var filter: MapFilter = .all
@@ -33,15 +38,26 @@ final class MapModel {
     /// Zooming out past the flat map's farthest distance shows the globe; zooming in below this leaves it.
     static let globeExitAltitude: Float = 350
 
-    /// The detailed layer is shown (and kept up to date) closer than this (km).
-    static let detailDistance: Float = 70
+    /// Each level is shown (and kept up to date) closer than this camera distance (km).
+    static func showDistance(_ level: MapTerrain.Level) -> Float {
+        switch level {
+        case .detail: 70
+        case .regional: 130
+        case .overview: .infinity
+        }
+    }
     /// Re-centre the frame when the view gets this far (km) from its centre.
     private static let frameRadius: Float = 1200
 
-    var showsDetail: Bool { camera.distance < Self.detailDistance && detail != nil }
+    func shows(_ level: MapTerrain.Level) -> Bool {
+        camera.distance < Self.showDistance(level) && terrains[level] != nil
+    }
 
-    /// Layers to label and test visibility against, detailed first.
-    var layers: [MapTerrain] { [showsDetail ? detail : nil, overview].compactMap { $0 } }
+    /// Shown layers, finest first: to label, to test visibility against, and to draw.
+    var layers: [MapTerrain] { MapTerrain.Level.allCases.filter(shows).compactMap { terrains[$0] } }
+
+    /// Models of the shown layers.
+    var sceneEntities: [ModelEntity] { MapTerrain.Level.allCases.filter(shows).compactMap { entities[$0] } }
 
     @ObservationIgnored private let loader = TileLoader()
     @ObservationIgnored private let overviewTiles = OverviewTiles()
@@ -49,7 +65,8 @@ final class MapModel {
     /// The latest request per level and its build.
     @ObservationIgnored private var requested: [MapTerrain.Level: MapTerrain.Request] = [:]
     @ObservationIgnored private var tasks: [MapTerrain.Level: Task<Void, Never>] = [:]
-    @ObservationIgnored private var holeFor: (overview: UUID, detail: UUID?)?
+    /// Per layer: the finer layer its current hole was cut for (nil: no hole).
+    @ObservationIgnored private var holeFor: [MapTerrain.Level: (layer: UUID, finer: UUID?)] = [:]
     @ObservationIgnored private var packs: PackSnapshot?
     @ObservationIgnored private var globeKey: (style: MapStyleChoice, packVersion: Int)?
     @ObservationIgnored private var globeTask: Task<Void, Never>?
@@ -104,11 +121,19 @@ final class MapModel {
             build(.init(level: .overview, frame: frame, center: here, size: wanted, style: settings.mapStyle,
                         packVersion: packVersion))
         }
-        if camera.distance < Self.detailDistance, stale(detail) || detail!.offCentre(camera.target) > 0.3 {
+        // Regional: 3.5× the distance across, 80–240 km (the 90 m tiles of a larger square would not fit in memory).
+        let regional = Double(min(240, max(80, camera.distance * 3.5))) * 1000
+        if camera.distance < Self.showDistance(.regional),
+           stale(terrains[.regional]) || terrains[.regional]!.offCentre(camera.target) > 0.25
+            || !(0.6...1.6).contains(terrains[.regional]!.size / regional) {
+            build(.init(level: .regional, frame: frame, center: here, size: regional, style: settings.mapStyle,
+                        packVersion: packVersion))
+        }
+        if camera.distance < Self.showDistance(.detail), stale(detail) || detail!.offCentre(camera.target) > 0.3 {
             build(.init(level: .detail, frame: frame, center: here, size: MapTerrain.detailSize, style: settings.mapStyle,
                         packVersion: packVersion))
         }
-        updateHole()
+        updateHoles()
     }
 
     private func resetFrame(center: GeoCoordinate, exaggeration: Float) {
@@ -117,16 +142,14 @@ final class MapModel {
         requested = [:]
         isBuilding = false
         frame = MapFrame(center: center, exaggeration: exaggeration)
-        detail = nil
-        overview = nil
-        detailEntity = nil
-        overviewEntity = nil
-        holeFor = nil
+        terrains = [:]
+        entities = [:]
+        holeFor = [:]
     }
 
     /// Ground height under a scene position from the finest layer that covers it.
     func groundHeight(x: Float, z: Float) -> Float? {
-        for layer in [detail, overview].compactMap({ $0 }) {
+        for layer in MapTerrain.Level.allCases.compactMap({ terrains[$0] }) {
             if let h = layer.groundHeight(x: x, z: z) { return h }
         }
         return nil
@@ -222,35 +245,32 @@ final class MapModel {
 
     private func install(_ terrain: MapTerrain, entity: ModelEntity?) {
         let hadGround = groundHeight(x: camera.target.x, z: camera.target.z) != nil
-        switch terrain.level {
-        case .detail:
-            detail = terrain
-            detailEntity = entity
-        case .overview:
-            overview = terrain
-            overviewEntity = entity
-            holeFor = nil
-        }
+        terrains[terrain.level] = terrain
+        entities[terrain.level] = entity
+        holeFor[terrain.level] = nil
         if !hadGround, let h = groundHeight(x: camera.target.x, z: camera.target.z) { camera.target.y = h }
-        updateHole()
+        updateHoles()
     }
 
-    /// The overview leaves out the cells under the shown detailed layer.
-    private func updateHole() {
-        guard let overview, let overviewEntity else { return }
-        let detailID = showsDetail ? detail?.id : nil
-        if let holeFor, holeFor.overview == overview.id, holeFor.detail == detailID { return }
-        holeFor = (overview.id, detailID)
-        let indices = (showsDetail ? detail : nil).map {
-            overview.mesh.indices(width: overview.grid.width, height: overview.grid.height, excluding: $0.sceneRect)
-        } ?? overview.mesh.indices
-        if let mesh = try? Self.makeMesh(overview.mesh, indices: indices) {
-            overviewEntity.model?.mesh = mesh
+    /// Each shown layer leaves out the cells under the next finer shown layer.
+    private func updateHoles() {
+        let shown = MapTerrain.Level.allCases.filter(shows)
+        for (index, level) in shown.enumerated() {
+            guard let layer = terrains[level], let entity = entities[level] else { continue }
+            let finer = index > 0 ? terrains[shown[index - 1]] : nil
+            if let done = holeFor[level], done.layer == layer.id, done.finer == finer?.id { continue }
+            holeFor[level] = (layer.id, finer?.id)
+            let indices = finer.map {
+                layer.mesh.indices(width: layer.grid.width, height: layer.grid.height, excluding: $0.sceneRect)
+            } ?? layer.mesh.indices
+            if let mesh = try? Self.makeMesh(layer.mesh, indices: indices) {
+                entity.model?.mesh = mesh
+            }
         }
     }
 
-    /// Called when the camera distance crosses the detail threshold, to cut or close the overview's hole.
-    func cameraDidChange() { updateHole() }
+    /// Called while zooming, to cut or close holes when a layer appears or disappears.
+    func cameraDidChange() { updateHoles() }
 
     private func loadOutlines() async -> CountryOutlines? {
         if let outlines { return outlines }

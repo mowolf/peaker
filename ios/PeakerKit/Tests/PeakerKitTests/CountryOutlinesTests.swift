@@ -25,6 +25,12 @@ struct CountryOutlinesTests {
         #expect(country(7.75, 46.02) == "CH")
         #expect(country(9.19, 45.46) == "IT")
         #expect(country(6.0, 39.0) == nil)
+        // Lake Geneva and Lake Constance are lakes; Zurich's lake too.
+        #expect(!outlines.lakes.isEmpty)
+        func value(_ lon: Double, _ lat: Double) -> UInt16 { mask[Int((48 - lat) * 100) * 700 + Int((lon - 5) * 100)] }
+        #expect(value(6.55, 46.45) == CountryOutlines.lake)
+        #expect(value(9.40, 47.60) == CountryOutlines.lake)
+        #expect(value(8.60, 47.30) == CountryOutlines.lake)
     }
 
     @Test func holesStayEmpty() {
@@ -47,7 +53,7 @@ struct CountryOutlinesTests {
         style.shading = 0
         let px = style.render(grid, countries: [2, 1, 0])
         #expect(Array(px[4..<7]) != Array(px[8..<11]))  // land and sea differ
-        #expect(Array(px[8..<11]) == [7, 20, 61])  // sea: water colour (0.03, 0.08, 0.24), truncated
+        #expect(Array(px[8..<11]) == [114, 242, 255])  // sea next to land: the coastline (0.45, 0.95, 1.0)
         let plain = style.render(grid)
         #expect(Array(px[0..<3]) != Array(plain[0..<3]))  // border drawn between countries 2 and 1
     }
