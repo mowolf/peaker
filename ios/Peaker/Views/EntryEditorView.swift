@@ -283,6 +283,9 @@ struct MarkdownPreview: View {
 struct PeakPickerView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    var title = "Add peak"
+    /// Offer to add a peak by the typed name only (for entries; not when the peak must be found on the map).
+    var allowsTypedName = true
     let onPick: (PeakEntry.Peak) -> Void
     @State private var query = ""
     @State private var results: [PeakInfo] = []
@@ -299,6 +302,7 @@ struct PeakPickerView: View {
                     Section {
                         ForEach(results, id: \.id) { row($0) }
                     }
+                    if allowsTypedName {
                     Section {
                         Button {
                             pick(PeakEntry.Peak(id: nil, name: trimmed))
@@ -308,9 +312,10 @@ struct PeakPickerView: View {
                     } footer: {
                         Text("For peaks outside the downloaded countries. It won't get a mark in the view.")
                     }
+                    }
                 }
             }
-            .navigationTitle("Add peak")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Peak name")
             .autocorrectionDisabled()

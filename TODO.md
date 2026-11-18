@@ -257,23 +257,22 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 # V0.3 — Map and photos
 
-## Milestone 13 — Peak map
+## Milestone 13 — Peak map (3D)
 
-Our own map drawn from the elevation tiles already on the phone: relief and peaks only, no roads or towns. It works
-fully offline, costs no map licence, and can be styled to match the viewer.
+Our own map from the elevation tiles: a 3D terrain model (RealityKit, no camera image) styled with height
+tints, hill shading and contour lines; no roads or towns. Flat map = the same scene seen from straight above.
 
-- [ ] **M-1** Renderer in PeakerKit: hillshade + contour lines from the 90 m / 30 m tiles (30 m when zoomed in), drawn
-      into map tiles (Web Mercator, 256 px) and cached on disk. Test on Linux like the horizon engine.
-- [ ] **M-2** Look: soft hillshade, thin contours every 100/500 m depending on zoom, water/sea as flat areas
-      (height ≤ 0), light and dark styles. Areas without data are shown plainly as such.
-- [ ] **M-3** Map view: `MapKit` with our tiles as the only layer (`MKTileOverlay`, `canReplaceMapContent`), or a
-      SwiftUI canvas if MapKit gets in the way; pan, zoom, rotate, current position.
-- [ ] **M-4** Peaks on the map from the installed peak databases, thinned by importance per zoom level (as the viewer's
-      label priority); ✓ climbed, ☆ wishlist, tap → peak detail.
-- [ ] **M-5** Peak search (FTS over all installed databases, also alternate names) that flies to the peak.
-- [ ] **M-6** Browse entries: filter Climbed / Wishlist / All, entry pins open the entry; "Show on map" from the
-      peak book and the peak detail.
-- [ ] **M-7** Measure: draw time and memory per tile, cache size limit; tiles of removed countries are dropped.
+- [x] **M-1** Style texture (`MapStyle`: Dusk default, Alpine), height exaggeration 1–2× (Settings › Map).
+- [x] **M-2** Terrain mesh and camera (`TerrainMesh`, `MapCamera`, `MapFrame`); 40 km areas, rebuilt around the view
+      when it leaves the middle (`MapModel`).
+- [x] **M-3** Map screen: drag, pinch, twist; 2D/3D, north up, my position.
+- [x] **M-4** Peak labels thinned by importance, hidden behind ridges (line of sight), ✓ / ★, tap → peak details.
+- [x] **M-5** Peak search that flies to the peak (highlighted).
+- [x] **M-6** Peak book on the map: filter "Peak book only", "Map" in peak details and as a swipe action in the
+      peak book.
+- [ ] **M-7** Measure on a device: build time, memory, frame rate; then level of detail (finer mesh near the
+      camera, coarser far away) and a larger area if needed.
+- [ ] **M-8** Map polish: two-finger tilt, smooth camera moves, a base/skirt under the area's edges, fog.
 
 ## Milestone 14 — Photos in entries
 

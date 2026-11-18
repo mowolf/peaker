@@ -37,7 +37,7 @@ struct PeakDetailView: View {
                     }
 
                     HStack(spacing: 12) {
-                        if !model.isFollowingDevice {
+                        if !model.isFollowingDevice && !model.showMap {
                             Button {
                                 withAnimation(.smooth) {
                                     model.touchYaw = visible.azimuth
@@ -50,6 +50,14 @@ struct PeakDetailView: View {
                             }
                             .buttonStyle(.glassProminent)
                         }
+                        Button {
+                            model.showOnMap(coordinate: peak.coordinate, peakID: peak.id)
+                            dismiss()
+                        } label: {
+                            Label("Map", systemImage: "map")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glass)
                         if let url = wikipediaURL {
                             Link(destination: url) {
                                 Label("Wikipedia", systemImage: "book")

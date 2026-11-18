@@ -63,6 +63,9 @@ private struct ViewerSheets: ViewModifier {
             .sheet(isPresented: $model.showSettings) {
                 SettingsView()
             }
+            .fullScreenCover(isPresented: $model.showMap) {
+                MapScreen()
+            }
             .sheet(isPresented: $model.showPeakBook) {
                 PeakBookView()
             }
@@ -136,6 +139,16 @@ private struct TopBar: View {
                 HStack(spacing: 8) {
                     ViewpointChip()
                         .glassEffectID("viewpoint", in: glass)
+                    Button { model.showOnMap(coordinate: model.currentViewpoint, peakID: nil) } label: {
+                        Image(systemName: "map")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                            .glassEffect(.regular, in: .circle)
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .accessibilityLabel("Map")
+                    .glassEffectID("map", in: glass)
                     if model.horizonStore.isComputing {
                         ProgressView()
                             .controlSize(.small)
@@ -427,7 +440,7 @@ private struct ControlBar: View {
 /// The glass and the hit area are part of the button's label: with the glass applied outside the button,
 /// only the small icon itself reacted to taps and taps on the rest of the circle went to the glass.
 /// Press feedback comes from the button style instead of interactive glass, which handles touches itself.
-private struct GlassCircleButton<Icon: View>: View {
+struct GlassCircleButton<Icon: View>: View {
     let title: String
     var glass: Glass = .regular
     let action: () -> Void
