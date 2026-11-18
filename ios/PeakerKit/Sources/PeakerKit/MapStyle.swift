@@ -67,6 +67,8 @@ public struct MapStyle: Sendable {
     public var indexContourEvery: Int
     public var contourColor: (r: Float, g: Float, b: Float)
     public var contourOpacity: Float
+    /// Land of countries without downloaded data.
+    public var unknownLand: (r: Float, g: Float, b: Float)
 
     /// Light and classic: green valleys, ochre and grey rock, white snow.
     public static let alpine = MapStyle(
@@ -74,21 +76,25 @@ public struct MapStyle: Sendable {
                 Stop(2300, 0.80, 0.72, 0.60), Stop(2900, 0.72, 0.69, 0.67), Stop(3300, 0.93, 0.94, 0.96),
                 Stop(4500, 1.00, 1.00, 1.00)],
         water: (0.60, 0.76, 0.88), noData: (0.85, 0.85, 0.85), shading: 0.85,
-        contourInterval: 100, indexContourEvery: 5, contourColor: (0.35, 0.25, 0.18), contourOpacity: 0.28)
+        contourInterval: 100, indexContourEvery: 5, contourColor: (0.35, 0.25, 0.18), contourOpacity: 0.28,
+        unknownLand: (0.22, 0.23, 0.25))
 
     /// Dark blue like the app icon: the land glows brighter with height, white contours.
     public static let dusk = MapStyle(
         tints: [Stop(0, 0.03, 0.08, 0.22), Stop(1000, 0.05, 0.16, 0.42), Stop(2200, 0.10, 0.30, 0.65),
                 Stop(3200, 0.32, 0.55, 0.88), Stop(4500, 0.85, 0.92, 1.00)],
         water: (0.01, 0.03, 0.10), noData: (0.02, 0.03, 0.06), shading: 0.9,
-        contourInterval: 100, indexContourEvery: 5, contourColor: (0.85, 0.92, 1.0), contourOpacity: 0.22)
+        contourInterval: 100, indexContourEvery: 5, contourColor: (0.85, 0.92, 1.0), contourOpacity: 0.22,
+        unknownLand: (0.0, 0.0, 0.0))
 
     public init(tints: [Stop], water: (r: Float, g: Float, b: Float), noData: (r: Float, g: Float, b: Float),
                 shading: Float, contourInterval: Float, indexContourEvery: Int,
-                contourColor: (r: Float, g: Float, b: Float), contourOpacity: Float) {
+                contourColor: (r: Float, g: Float, b: Float), contourOpacity: Float,
+                unknownLand: (r: Float, g: Float, b: Float) = (0, 0, 0)) {
         self.tints = tints; self.water = water; self.noData = noData; self.shading = shading
         self.contourInterval = contourInterval; self.indexContourEvery = indexContourEvery
         self.contourColor = contourColor; self.contourOpacity = contourOpacity
+        self.unknownLand = unknownLand
     }
 
     public func tint(_ h: Float) -> (r: Float, g: Float, b: Float) {

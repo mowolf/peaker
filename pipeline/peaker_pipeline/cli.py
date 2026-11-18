@@ -56,6 +56,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--hd-min-relief", type=float, default=1000, help="30 m only for tiles with this much relief…")
     p.add_argument("--hd-min-peak", type=float, default=1500, help="…or summits at least this high")
 
+    p = sub.add_parser("outlines", help="write the country outlines file the app ships (Natural Earth)")
+    p.add_argument("--dest", type=Path, default=Path("../ios/Peaker/Resources/CountryOutlines.bin"))
+    p.add_argument("--tolerance", type=float, default=0.02, help="simplification in degrees (~2 km)")
+
     p = sub.add_parser("publish", help="copy built packs into a static-file checkout (e.g. height-data repo)")
     p.add_argument("--out", type=Path, default=Path("out"), help="pipeline output directory")
     p.add_argument("--repo", type=Path, required=True, help="checkout to publish into, e.g. ../../height-data")
@@ -118,6 +122,12 @@ def main(argv: list[str] | None = None) -> None:
                            workers=args.workers, hd_min_relief=args.hd_min_relief, hd_min_peak=args.hd_min_peak,
                            clip=tuple(float(v) for v in args.clip.split(",")) if args.clip else None)
         print(json.dumps(build_country_tiles(codes, args.out, args.cache, opts)))
+
+    elif args.cmd == "outlines":
+        from .countries import load_countries
+        from .outlines import write_outlines
+
+        print(json.dumps(write_outlines(load_countries(args.cache), args.dest, args.tolerance)))
 
     elif args.cmd == "publish":
         from .publish import publish

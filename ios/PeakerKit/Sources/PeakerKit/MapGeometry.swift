@@ -35,15 +35,18 @@ public struct TerrainMesh: Sendable {
     public var uvs: [SIMD2<Float>]
     public var indices: [UInt32]
 
-    /// - Parameter frame: must be centred on the grid's centre.
-    public init(grid: HeightGrid, frame: MapFrame) {
+    /// - Parameters:
+    ///   - frame: the scene's frame; the grid may be centred elsewhere in it (map layers share one frame).
+    ///   - lowered: scene units to move the whole mesh down (a coarse layer under a detailed one).
+    public init(grid: HeightGrid, frame: MapFrame, lowered: Float = 0) {
         let w = grid.width, h = grid.height
         let cellKm = Float(grid.cellSize / 1000)
-        let halfW = Float(w - 1) / 2, halfH = Float(h - 1) / 2
+        let origin = frame.point(grid.center, height: 0)
+        let halfW = Float(w - 1) / 2 - origin.x / cellKm, halfH = Float(h - 1) / 2 - origin.z / cellKm
         let ex = frame.exaggeration
         func height(_ r: Int, _ c: Int) -> Float {
             let v = grid[r, c]
-            return v.isNaN ? 0 : v / 1000 * ex
+            return (v.isNaN ? 0 : v / 1000 * ex) - lowered
         }
         positions = []
         normals = []
