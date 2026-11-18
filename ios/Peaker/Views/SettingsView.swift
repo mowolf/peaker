@@ -149,6 +149,8 @@ struct LicensesView: View {
         .init(name: "Wikidata", text: "Wikidata, CC0", url: "https://www.wikidata.org"),
         .init(name: "GeoNames", text: "GeoNames, CC BY 4.0", url: "https://www.geonames.org"),
         .init(name: "Natural Earth", text: "Made with Natural Earth (public domain)", url: "https://www.naturalearthdata.com"),
+        .init(name: "Wikipedia", text: "Peak descriptions from Wikipedia articles, CC BY-SA 4.0",
+              url: "https://creativecommons.org/licenses/by-sa/4.0/"),
     ]
 
     var body: some View {

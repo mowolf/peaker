@@ -31,6 +31,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-osm", action="store_true", help="skip OpenStreetMap (e.g. Geofabrik unreachable)")
     p.add_argument("--osm-pbf", type=Path, nargs="*", default=[], help="use these .osm.pbf files instead of Geofabrik")
     p.add_argument("--no-wikidata", action="store_true")
+    p.add_argument("--no-wikipedia-text", action="store_true", help="skip the Wikipedia article intros")
     p.add_argument("--no-geonames", action="store_true")
     p.add_argument("--hills", action="store_true", help="also include natural=hill / GeoNames HLL")
     p.add_argument("--drop-pbf", action="store_true",
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
             use_osm=not args.no_osm,
             osm_pbfs=args.osm_pbf,
             use_wikidata=not args.no_wikidata,
+            use_wikipedia_text=not args.no_wikipedia_text,
             use_geonames=not args.no_geonames,
             include_hills=args.hills,
             keep_pbf=not args.drop_pbf,

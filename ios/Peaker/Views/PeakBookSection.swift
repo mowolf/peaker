@@ -24,11 +24,11 @@ struct PeakBookSection: View {
                 .disabled(climbedToday)
 
                 Button { toggleWishlist(planned) } label: {
-                    Label(planned == nil ? "Wishlist" : "On wishlist", systemImage: planned == nil ? "star" : "star.fill")
+                    Label(planned == nil ? "Wishlist" : "On wishlist", systemImage: planned == nil ? "heart" : "heart.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
-                .tint(planned == nil ? nil : .yellow)
+                .tint(planned == nil ? nil : .pink)
             }
             .controlSize(.large)
             .sensoryFeedback(.success, trigger: entries.count)
@@ -136,7 +136,7 @@ private struct EntryRow: View {
         switch stored.entry.status {
         case .summited: "checkmark.circle.fill"
         case .attempted: "arrow.uturn.down.circle"
-        case .planned: "star.fill"
+        case .planned: "heart.fill"
         }
     }
 
@@ -144,7 +144,7 @@ private struct EntryRow: View {
         switch stored.entry.status {
         case .summited: .green
         case .attempted: .orange
-        case .planned: .yellow
+        case .planned: .pink
         }
     }
 

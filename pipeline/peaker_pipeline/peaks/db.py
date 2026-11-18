@@ -43,10 +43,14 @@ CREATE TABLE peaks (
 CREATE TABLE peak_aliases (alias TEXT PRIMARY KEY, peak_id TEXT NOT NULL);
 CREATE VIRTUAL TABLE peaks_rtree USING rtree(rowid, min_lat, max_lat, min_lon, max_lon);
 CREATE VIRTUAL TABLE peaks_fts USING fts5(name, names, alt_names, content='', tokenize='unicode61 remove_diacritics 2');
+-- Wikipedia article intros (CC BY-SA 4.0; the app shows source and licence). Optional: older DBs lack it.
+CREATE TABLE peak_texts (peak_id TEXT NOT NULL, lang TEXT NOT NULL, title TEXT NOT NULL, text TEXT NOT NULL,
+                         PRIMARY KEY (peak_id, lang));
 """
 
 
-def write_peak_db(path: Path | str, peaks: list[Peak], meta: dict[str, str]) -> None:
+def write_peak_db(path: Path | str, peaks: list[Peak], meta: dict[str, str],
+                  texts: dict[str, list[tuple[str, str, str]]] | None = None) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -79,6 +83,9 @@ def write_peak_db(path: Path | str, peaks: list[Peak], meta: dict[str, str]) -> 
         con.executemany("INSERT INTO peaks_rtree VALUES (?, ?, ?, ?, ?)", rtree)
         con.executemany("INSERT INTO peaks_fts(rowid, name, names, alt_names) VALUES (?, ?, ?, ?)", fts)
         con.executemany("INSERT OR IGNORE INTO peak_aliases VALUES (?, ?)", aliases)
+        con.executemany("INSERT OR IGNORE INTO peak_texts VALUES (?, ?, ?, ?)",
+                        [(pid, lang, title, text) for pid, rows in (texts or {}).items() if pid in seen
+                         for lang, title, text in rows])
         con.commit()
         con.execute("VACUUM")
     finally:

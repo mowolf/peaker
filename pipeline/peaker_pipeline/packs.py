@@ -31,6 +31,7 @@ from .countries import Country, load_countries, tiles_for_geometry
 from .dem import TileSource
 from .encode import DEFAULT_CODEC, codec_by_name, pack_tile
 from .peaks import geonames, osm, wikidata
+from .peaks import wikitext
 from .peaks.db import write_peak_db
 from .peaks.enrich import add_dem_heights, elevation_report
 from .peaks.merge import compute_isolation, merge_peaks
@@ -49,6 +50,8 @@ ATTRIBUTION = [
     {"name": "Wikidata", "text": "Wikidata, CC0", "url": "https://www.wikidata.org"},
     {"name": "GeoNames", "text": "GeoNames, CC BY 4.0", "url": "https://www.geonames.org"},
     {"name": "Natural Earth", "text": "Made with Natural Earth (public domain)", "url": "https://www.naturalearthdata.com"},
+    {"name": "Wikipedia", "text": "Peak descriptions from Wikipedia articles, CC BY-SA 4.0",
+     "url": "https://creativecommons.org/licenses/by-sa/4.0/"},
 ]
 
 
@@ -59,6 +62,7 @@ class PackOptions:
     use_osm: bool = True
     osm_pbfs: list[Path] = field(default_factory=list)  # use these instead of downloading from Geofabrik
     use_wikidata: bool = True
+    use_wikipedia_text: bool = True  # article intros for offline peak details (peaks/wikitext.py)
     use_geonames: bool = True
     include_hills: bool = False
     keep_pbf: bool = True  # False in CI: delete each Geofabrik extract after reading it
@@ -319,9 +323,15 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
         peaks, involved = collect_peaks(country, countries, land, cache_dir, opts)
         add_dem_heights(peaks, base.grid)
         compute_isolation(peaks)
+    texts: dict = {}
+    if opts.use_wikipedia_text:
+        try:
+            texts = wikitext.collect(peaks, cache_dir)
+        except Exception as e:  # nice to have: never fail a pack over it
+            log.warning("wikipedia texts for %s skipped: %s", code, e)
     db_path = out / "build" / f"{code}.sqlite"
     write_peak_db(db_path, peaks, {"country": code, "built_at": manifest["built_at"],
-                                   "sources": ",".join(involved)})
+                                   "sources": ",".join(involved)}, texts)
     raw = db_path.read_bytes()
     c = zlib.compressobj(9, zlib.DEFLATED, -15)
     packed = c.compress(raw) + c.flush()
@@ -347,6 +357,7 @@ def build_pack(code: str, out: Path, cache_dir: Path, opts: PackOptions) -> dict
 
     report = {
         "code": code,
+        "wikipedia_texts": len(texts),
         "tiles": {r: len(v) for r, v in manifest["tiles"].items()},
         "tile_mb": {r: round(sum(e["bytes"] for e in v) / 1e6, 1) for r, v in manifest["tiles"].items()},
         "peaks": len(peaks),

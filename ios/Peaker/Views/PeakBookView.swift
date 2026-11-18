@@ -143,7 +143,7 @@ struct PeakBookView: View {
                 ContentUnavailableView("No climbs yet", systemImage: "mountain.2",
                                        description: Text("Tap a peak in the view and choose “Mark as climbed”, or write a new entry."))
             } else {
-                ContentUnavailableView("Wishlist is empty", systemImage: "star",
+                ContentUnavailableView("Wishlist is empty", systemImage: "heart",
                                        description: Text("Tap a peak in the view and add it to your wishlist."))
             }
         }
@@ -242,7 +242,7 @@ private struct BookRow: View {
         switch stored.entry.status {
         case .summited: "checkmark.circle.fill"
         case .attempted: "arrow.uturn.down.circle"
-        case .planned: stored.entry.isLinked ? "star.fill" : "doc.text"
+        case .planned: stored.entry.isLinked ? "heart.fill" : "doc.text"
         }
     }
 
@@ -250,7 +250,7 @@ private struct BookRow: View {
         switch stored.entry.status {
         case .summited: .green
         case .attempted: .orange
-        case .planned: stored.entry.isLinked ? .yellow : .secondary
+        case .planned: stored.entry.isLinked ? .pink : .secondary
         }
     }
 }
@@ -269,7 +269,7 @@ private struct StatsCard: View {
             if let highest = stats.highest, let e = highest.elevation {
                 tile("Highest", model.settings.elevation(e), icon: "arrow.up.to.line", detail: highest.displayName)
             } else {
-                tile("Wishlist", "\(stats.wishlist)", icon: "star.fill")
+                tile("Wishlist", "\(stats.wishlist)", icon: "heart.fill")
             }
         }
         .padding(.vertical, 4)

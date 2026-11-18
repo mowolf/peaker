@@ -5,6 +5,7 @@ struct PeakDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let visible: VisiblePeak
+    @State private var about: (lang: String, title: String, text: String)?
 
     var body: some View {
         let peak = visible.peak
@@ -20,58 +21,40 @@ struct PeakDetailView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
+                        Text(String(format: "%.5f°, %.5f°", peak.coordinate.latitude, peak.coordinate.longitude))
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
 
                     PeakBookSection(peak: peak)
 
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        if let e = peak.elevation {
-                            Stat(title: "Elevation", value: settings.elevation(e), icon: "mountain.2")
-                        }
-                        Stat(title: "Distance", value: settings.distance(visible.distance), icon: "point.topleft.down.to.point.bottomright.curvepath")
-                        Stat(title: "Bearing", value: "\(Int(visible.azimuth.rounded()))° \(CompassRibbon.cardinal(Int(visible.azimuth.rounded())))",
-                             icon: "location.north.line")
-                        if let p = peak.prominence, p > 0 {
-                            Stat(title: "Prominence", value: settings.elevation(p), icon: "chart.line.uptrend.xyaxis")
+                    if peak.elevation != nil || (peak.prominence ?? 0) > 0 {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            if let e = peak.elevation {
+                                Stat(title: "Elevation", value: settings.elevation(e), icon: "mountain.2")
+                            }
+                            if let p = peak.prominence, p > 0 {
+                                Stat(title: "Prominence", value: settings.elevation(p), icon: "chart.line.uptrend.xyaxis")
+                            }
                         }
                     }
 
-                    HStack(spacing: 12) {
-                        if !model.isFollowingDevice && model.screen == .finder {
-                            Button {
-                                withAnimation(.smooth) {
-                                    model.touchYaw = visible.azimuth
-                                    model.touchPitch = visible.altitude
-                                }
-                                dismiss()
-                            } label: {
-                                Label("Center view", systemImage: "scope")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.glassProminent)
-                        }
-                        Button {
-                            model.showOnMap(coordinate: peak.coordinate, peakID: peak.id)
-                            dismiss()
-                        } label: {
-                            Label("Map", systemImage: "map")
+                    FinderRow(visible: visible) {
+                        model.findInPeakFinder(visible)
+                        dismiss()
+                    }
+
+                    if let about {
+                        AboutSection(about: about)
+                    } else if let url = wikipediaURL {
+                        Link(destination: url) {
+                            Label("Wikipedia", systemImage: "book")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.glass)
-                        if let url = wikipediaURL {
-                            Link(destination: url) {
-                                Label("Wikipedia", systemImage: "book")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.glass)
-                        }
+                        .controlSize(.large)
                     }
-                    .controlSize(.large)
-
-                    Text(String(format: "%.5f°, %.5f°", peak.coordinate.latitude, peak.coordinate.longitude))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
                 }
                 .padding(20)
             }
@@ -80,7 +63,15 @@ struct PeakDetailView: View {
                     Button("Close", systemImage: "xmark", role: .close) { dismiss() }
                 }
             }
+            .task(id: peak.id) { loadAbout() }
         }
+    }
+
+    /// The Wikipedia intro stored with the peak data: in your language, else English, else the local one.
+    private func loadAbout() {
+        let texts = PeakDatabase.texts(peakID: visible.peak.id, in: model.packs.snapshot().peakDatabases)
+        let language = model.settings.peakLanguage
+        about = texts.first { $0.lang == language } ?? texts.first { $0.lang == "en" } ?? texts.first
     }
 
     private var otherNames: [String] {
@@ -120,5 +111,69 @@ private struct Stat: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
+    }
+}
+
+/// Distance and bearing from where you are, and a button to find the peak in the peak finder.
+private struct FinderRow: View {
+    @Environment(AppModel.self) private var model
+    let visible: VisiblePeak
+    let onFind: () -> Void
+
+    var body: some View {
+        let bearing = Int(visible.azimuth.rounded()) % 360
+        HStack(spacing: 16) {
+            Label(model.settings.distance(visible.distance), systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+            Label("\(bearing)° \(CompassRibbon.cardinal(bearing))", systemImage: "location.north.line")
+            Spacer(minLength: 8)
+            Button(action: onFind) {
+                Image(systemName: "binoculars.fill")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .glassEffect(.regular, in: .circle)
+            }
+            .buttonStyle(PressScaleStyle())
+            .accessibilityLabel("Find in the peak finder")
+        }
+        .font(.subheadline.monospacedDigit())
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// The peak's Wikipedia intro, readable offline; source and licence (CC BY-SA 4.0) below it, as required.
+private struct AboutSection: View {
+    let about: (lang: String, title: String, text: String)
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("About").font(.headline)
+            Text(about.text)
+                .font(.callout)
+                .lineLimit(expanded ? nil : 6)
+                .textSelection(.enabled)
+            if about.text.count > 320 {
+                Button(expanded ? "Show less" : "Show more") { withAnimation(.smooth) { expanded.toggle() } }
+                    .font(.footnote.weight(.semibold))
+            }
+            HStack(spacing: 4) {
+                Text("From Wikipedia,")
+                if let url = articleURL {
+                    Link(about.title, destination: url)
+                }
+                Text("· CC BY-SA 4.0")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+    }
+
+    private var articleURL: URL? {
+        let title = about.title.replacingOccurrences(of: " ", with: "_")
+        return URL(string: "https://\(about.lang).wikipedia.org/wiki/\(title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title)")
     }
 }

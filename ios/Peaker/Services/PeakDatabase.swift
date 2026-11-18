@@ -111,6 +111,25 @@ enum PeakDatabase {
         return Array(out.sorted { $0.importance > $1.importance }.prefix(limit))
     }
 
+    /// A peak's Wikipedia intros: (language, article title, text). Empty for databases built before the texts
+    /// (they have no `peak_texts` table; the query then fails to prepare and returns nothing).
+    static func texts(peakID: String, in databases: [URL]) -> [(lang: String, title: String, text: String)] {
+        let sql = "SELECT lang, title, text FROM peak_texts WHERE peak_id = ?"
+        for url in databases {
+            var out: [(lang: String, title: String, text: String)] = []
+            withStatement(sql, in: url) { stmt in
+                sqlite3_bind_text(stmt, 1, peakID, -1, sqliteTransient)
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let l = sqlite3_column_text(stmt, 0), let t = sqlite3_column_text(stmt, 1),
+                          let x = sqlite3_column_text(stmt, 2) else { continue }
+                    out.append((String(cString: l), String(cString: t), String(cString: x)))
+                }
+            }
+            if !out.isEmpty { return out }
+        }
+        return []
+    }
+
     // MARK: - SQLite
 
     /// SQLite copies bound strings (Swift strings are temporary).

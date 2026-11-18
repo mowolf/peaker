@@ -67,7 +67,7 @@ private struct SearchRow: View {
         let v = match.visible
         HStack(spacing: 12) {
             Image(systemName: "mountain.2.fill")
-                .foregroundStyle(.tint)
+                .foregroundStyle(.primary)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(match.name)
