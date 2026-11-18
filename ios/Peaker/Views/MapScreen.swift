@@ -238,7 +238,7 @@ struct MapScreen: View {
 
     private func drawLabels(_ context: inout GraphicsContext, labels: [MapLabel]) {
         for label in labels {
-            let color: Color = label.isHighlighted ? .orange : .white
+            let color: Color = .white
             var leader = Path()
             leader.move(to: label.summit)
             leader.addLine(to: CGPoint(x: label.summit.x, y: label.frame.maxY))
@@ -246,15 +246,17 @@ struct MapScreen: View {
             context.fill(Path(ellipseIn: CGRect(x: label.summit.x - 3, y: label.summit.y - 3, width: 6, height: 6)),
                          with: .color(color))
             let background = Path(roundedRect: label.frame, cornerRadius: label.frame.height / 2)
-            context.fill(background, with: .color(label.isHighlighted ? .orange : .black.opacity(0.55)))
-            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            // A search result: white label with dark text.
+            context.fill(background, with: .color(label.isHighlighted ? .white : .black.opacity(0.55)))
+            let textColor: Color = label.isHighlighted ? Color(red: 0.08, green: 0.10, blue: 0.16) : .white
+            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(textColor)
             if let mark = label.mark {
                 let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "star.fill"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(mark == .climbed ? Color.green : Color.yellow)
                 title = Text("\(symbol) \(title)")
             }
-            let detail = Text(" " + label.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.75))
+            let detail = Text(" " + label.detail).font(.system(size: 11)).foregroundStyle(textColor.opacity(0.75))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
                          anchor: .leading)
         }
@@ -537,8 +539,8 @@ private struct MapBottomControls: View {
 
     var body: some View {
         ModeBar(onPeakBook: { model.showPeakBook = true }, onSearch: { showsSearch = true }) {
-            GlassCircleButton(title: "Peak finder", glass: .regular.tint(.orange), action: { model.screen = .finder }) {
-                Image(systemName: "binoculars.fill").font(.title3).foregroundStyle(.white)
+            GlassCircleButton(title: "Peak finder", action: { model.screen = .finder }) {
+                Image(systemName: "binoculars.fill").font(.title3)
             }
         }
         .padding(.horizontal, 16)

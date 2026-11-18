@@ -363,7 +363,7 @@ private struct SearchTargetChip: View {
                     HStack(spacing: 10) {
                         Image(systemName: icon)
                             .font(.title3)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.white)
                             .contentTransition(.symbolEffect(.replace))
                         VStack(alignment: .leading, spacing: 0) {
                             Text(target.peak.displayName(language: model.settings.peakLanguage))
@@ -425,8 +425,8 @@ private struct ControlBar: View {
             }
             .disabled(!model.motion.isAvailable)
 
-            GlassCircleButton(title: "Map", glass: .regular.tint(.blue), action: { model.openMap() }) {
-                Image(systemName: "map.fill").font(.title3).foregroundStyle(.white)
+            GlassCircleButton(title: "Map", action: { model.openMap() }) {
+                Image(systemName: "map.fill").font(.title3)
             }
 
             ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
@@ -501,10 +501,12 @@ private struct ToggleButton: View {
     let action: () -> Void
 
     var body: some View {
-        GlassCircleButton(title: title, glass: isOn ? Glass.regular.tint(.orange) : Glass.regular, action: action) {
+        // On: a light, neutral glass and the filled symbol (no colour in the bottom bar).
+        GlassCircleButton(title: title, glass: isOn ? Glass.regular.tint(.white.opacity(0.35)) : Glass.regular,
+                          action: action) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .foregroundStyle(isOn ? Color.black.opacity(0.85) : Color.primary)
         }
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
