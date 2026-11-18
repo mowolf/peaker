@@ -125,3 +125,33 @@ struct MapTerrain: Sendable {
         return max(abs(target.x - c.x), abs(target.z - c.z)) / Float(size / 1000)
     }
 }
+
+/// The equirectangular world image for the globe: every downloaded tile painted from its overview tile, the
+/// rest of the world from the country outlines (black land, sea, borders).
+enum WorldImage {
+    static let width = 4096
+
+    static func build(style: MapStyleChoice, packs: PackSnapshot, overview: OverviewTiles,
+                      outlines: CountryOutlines?) async -> [UInt8]? {
+        let w = width, h = width / 2
+        var heights = [Float](repeating: .nan, count: w * h)
+        let ids = Array(packs.tileFiles.keys)
+        // In batches, so a world of downloads doesn't have to sit in memory at once.
+        for start in stride(from: 0, to: ids.count, by: 200) {
+            if Task.isCancelled { return nil }
+            let batch = Array(ids[start..<min(ids.count, start + 200)])
+            for (id, tile) in await overview.tiles(batch, files: packs.tileFiles) {
+                let c0 = Int((Double(id.lon) + 180) / 360 * Double(w)), c1 = Int((Double(id.lon + 1) + 180) / 360 * Double(w))
+                let r0 = Int((90 - Double(id.lat + 1)) / 180 * Double(h)), r1 = Int((90 - Double(id.lat)) / 180 * Double(h))
+                for r in max(0, r0)..<min(h, r1) {
+                    let lat = 90 - (Double(r) + 0.5) / Double(h) * 180
+                    for c in max(0, c0)..<min(w, c1) {
+                        heights[r * w + c] = tile.height(latitude: lat, longitude: (Double(c) + 0.5) / Double(w) * 360 - 180)
+                    }
+                }
+            }
+        }
+        if Task.isCancelled { return nil }
+        return style.style.renderWorld(width: w, outlines: outlines, heights: heights)
+    }
+}

@@ -24,6 +24,15 @@ final class MapModel {
     var highlightedPeakID: String?
     var filter: MapFilter = .all
 
+    /// Flat map (terrain layers) or, zoomed out beyond the flat map's range, the globe.
+    enum Mode { case flat, globe }
+    private(set) var mode = Mode.flat
+    var globe = GlobeCamera(center: GeoCoordinate(latitude: 46, longitude: 8), altitude: 3000)
+    private(set) var globeEntity: ModelEntity?
+
+    /// Zooming out past the flat map's farthest distance shows the globe; zooming in below this leaves it.
+    static let globeExitAltitude: Float = 350
+
     /// The detailed layer is shown (and kept up to date) closer than this (km).
     static let detailDistance: Float = 70
     /// Re-centre the frame when the view gets this far (km) from its centre.
@@ -42,6 +51,8 @@ final class MapModel {
     @ObservationIgnored private var tasks: [MapTerrain.Level: Task<Void, Never>] = [:]
     @ObservationIgnored private var holeFor: (overview: UUID, detail: UUID?)?
     @ObservationIgnored private var packs: PackSnapshot?
+    @ObservationIgnored private var globeKey: (style: MapStyleChoice, packVersion: Int)?
+    @ObservationIgnored private var globeTask: Task<Void, Never>?
 
     enum MapFilter: String, CaseIterable, Identifiable {
         case all, peakBook
@@ -54,6 +65,7 @@ final class MapModel {
     /// Show the area around `coordinate` (opening the map, "Show on map", a search result).
     func focus(on coordinate: GeoCoordinate, distance: Float? = nil, settings: AppSettings, packs: PackSnapshot,
                packVersion: Int) {
+        mode = .flat  // a place to look at closely: always on the flat map
         let exaggeration = Float(settings.mapExaggeration)
         if frame == nil || frame?.exaggeration != exaggeration
             || length(frame!.point(coordinate, height: 0)) > Self.frameRadius {
@@ -118,6 +130,64 @@ final class MapModel {
             if let h = layer.groundHeight(x: x, z: z) { return h }
         }
         return nil
+    }
+
+    // MARK: - Globe
+
+    /// What the scene's camera does: the flat map's camera, or the globe's.
+    var sceneCamera: SceneCamera {
+        switch mode {
+        case .flat:
+            SceneCamera(eye: camera.eye, target: camera.target, up: camera.up, fieldOfView: camera.fieldOfView,
+                        near: 0.05, far: 8000)
+        case .globe:
+            SceneCamera(eye: globe.eye, target: globe.target, up: globe.up, fieldOfView: globe.fieldOfView,
+                        near: max(1, globe.altitude * 0.05), far: globe.altitude + 2 * Globe.radius)
+        }
+    }
+
+    /// Switch to the globe above the place the flat map shows.
+    func enterGlobe(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        guard mode == .flat else { return }
+        let center = frame?.coordinate(x: camera.target.x, z: camera.target.z) ?? globe.center
+        globe = GlobeCamera(center: center, altitude: MapCamera.distanceRange.upperBound + 50, heading: camera.heading)
+            .clamped()
+        mode = .globe
+        buildGlobe(style: settings.mapStyle, packs: packs, packVersion: packVersion)
+    }
+
+    /// Back to the flat map at the globe's centre.
+    func leaveGlobe(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        guard mode == .globe else { return }
+        mode = .flat
+        camera.heading = globe.heading
+        focus(on: globe.center, distance: MapCamera.distanceRange.upperBound * 0.9, settings: settings, packs: packs,
+              packVersion: packVersion)
+    }
+
+    /// The globe's model: built once per style and set of downloads.
+    func buildGlobe(style: MapStyleChoice, packs: PackSnapshot, packVersion: Int) {
+        if let globeKey, globeKey.style == style, globeKey.packVersion == packVersion, globeEntity != nil || globeTask != nil {
+            return
+        }
+        globeKey = (style, packVersion)
+        globeTask?.cancel()
+        isBuilding = true
+        let overviewTiles = overviewTiles
+        globeTask = Task {
+            let outlines = await self.loadOutlines()
+            let work = Task.detached(priority: .userInitiated) {
+                await WorldImage.build(style: style, packs: packs, overview: overviewTiles, outlines: outlines)
+            }
+            let image = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            guard !Task.isCancelled, let image else { return }
+            let entity = try? await Self.makeEntity(mesh: Globe.mesh(), texture: image, width: WorldImage.width,
+                                                    height: WorldImage.width / 2, indices: nil)
+            guard self.globeKey?.style == style, self.globeKey?.packVersion == packVersion else { return }
+            self.globeEntity = entity
+            self.globeTask = nil
+            self.isBuilding = !self.tasks.isEmpty
+        }
     }
 
     // MARK: - Building
@@ -207,11 +277,16 @@ final class MapModel {
 
     /// The layer as a RealityKit model: the style texture already has light and shade, so it is unlit.
     private static func makeEntity(_ terrain: MapTerrain, indices: [UInt32]) async throws -> ModelEntity {
-        let mesh = try makeMesh(terrain.mesh, indices: indices)
-        let size = terrain.textureSize
-        guard let provider = CGDataProvider(data: Data(terrain.texture) as CFData),
-              let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
-                                  bytesPerRow: size * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        try await makeEntity(mesh: terrain.mesh, texture: terrain.texture, width: terrain.textureSize,
+                             height: terrain.textureSize, indices: indices)
+    }
+
+    private static func makeEntity(mesh source: TerrainMesh, texture pixels: [UInt8], width: Int, height: Int,
+                                   indices: [UInt32]?) async throws -> ModelEntity {
+        let mesh = try makeMesh(source, indices: indices ?? source.indices)
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                  bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { throw CocoaError(.coderInvalidValue) }
@@ -224,3 +299,13 @@ final class MapModel {
 }
 
 private func length(_ v: SIMD3<Float>) -> Float { (v * v).sum().squareRoot() }
+
+/// Camera placement for the scene (flat map or globe).
+struct SceneCamera: Equatable {
+    var eye: SIMD3<Float>
+    var target: SIMD3<Float>
+    var up: SIMD3<Float>
+    var fieldOfView: Float
+    var near: Float
+    var far: Float
+}
