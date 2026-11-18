@@ -14,7 +14,9 @@ struct ViewerView: View {
                 TopBar()
                 StatusBanner()
                 Spacer()
-                if model.showsCamera {
+                if model.searchTarget != nil {
+                    SearchTargetChip()
+                } else if model.showsCamera {
                     CalibrationHint()
                 }
                 ControlBar()
@@ -60,6 +62,10 @@ private struct ViewerSheets: ViewModifier {
             .sheet(isPresented: $model.showSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $model.showSearch) {
+                PeakSearchView()
+                    .presentationDetents([.medium, .large])
+            }
     }
 }
 
@@ -89,6 +95,8 @@ private struct ViewerLifecycle: ViewModifier {
             }
             .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
             .onChange(of: model.packs.version) { Task { await model.recompute() } }
+            // A new result moves the search target (new viewpoint) or drops it (no longer visible).
+            .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
             // Pause camera and sensors in the background (battery), resume as they were.
             .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
     }
@@ -248,9 +256,67 @@ private struct CalibrationHint: View {
     }
 }
 
+/// The peak picked in search: which way to turn, tap for details, ✕ to stop highlighting it.
+private struct SearchTargetChip: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let target = model.searchTarget {
+            HStack(spacing: 10) {
+                Button { model.selectedPeak = target } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: icon)
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                            .contentTransition(.symbolEffect(.replace))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(target.peak.displayName(language: model.settings.peakLanguage))
+                                .font(.subheadline.weight(.semibold))
+                            Text(hint)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Button { withAnimation(.smooth) { model.clearSearchTarget() } } label: {
+                    Image(systemName: "xmark")
+                        .font(.footnote.weight(.bold))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop highlighting")
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: .capsule)
+            .transition(.blurReplace)
+        }
+    }
+
+    /// Within this many degrees the peak counts as straight ahead.
+    private static let aheadTolerance = 10.0
+
+    private var turn: Double { model.turnToSearchTarget ?? 0 }
+
+    private var icon: String {
+        if abs(turn) <= Self.aheadTolerance { return "scope" }
+        return turn > 0 ? "arrow.turn.up.right" : "arrow.turn.up.left"
+    }
+
+    private var hint: String {
+        if abs(turn) <= Self.aheadTolerance { return "Ahead" }
+        let degrees = Int(abs(turn).rounded())
+        return turn > 0 ? "Turn \(degrees)° right" : "Turn \(degrees)° left"
+    }
+}
+
 // MARK: - Bottom controls
 
-/// Gyro (automatic direction) and camera toggles on the left, settings (with offline data) on the right.
+/// Gyro (automatic direction) and camera toggles on the left, peak search and settings on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
 
@@ -274,6 +340,10 @@ private struct ControlBar: View {
             }
 
             Spacer(minLength: 0)
+
+            GlassCircleButton(title: "Find a peak", action: { model.showSearch = true }) {
+                Image(systemName: "magnifyingglass").font(.title3)
+            }
 
             GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
                 Image(systemName: "gearshape").font(.title3)

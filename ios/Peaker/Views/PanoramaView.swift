@@ -33,11 +33,15 @@ struct PanoramaView: View {
         }
         private var entriesKey: EntriesKey?
         private var cachedEntries: [LabelEntry] = []
+        /// Peak ID → index in `cachedEntries` (to find the search target without a scan every frame).
+        private(set) var entryIndex: [String: Int] = [:]
 
         /// Label data for the current result, most important peak first.
         func entries(for key: EntriesKey, make: () -> [LabelEntry]) -> [LabelEntry] {
             if key != entriesKey {
                 cachedEntries = make().sorted { $0.visible.peak.importance > $1.visible.peak.importance }
+                entryIndex = Dictionary(cachedEntries.enumerated().map { ($1.visible.id, $0) },
+                                        uniquingKeysWith: { first, _ in first })
                 entriesKey = key
             }
             return cachedEntries
@@ -71,6 +75,9 @@ struct PanoramaView: View {
                     drawRidges(&context, horizon: horizon, pose: pose, size: size)
                 }
                 drawLabels(&context, labels: labels)
+                if let target = model.searchTarget {
+                    drawSearchTarget(&context, target: target, pose: pose, size: size)
+                }
             }
             .contentShape(Rectangle())
             .gesture(dragGesture(size: size))
@@ -226,24 +233,71 @@ struct PanoramaView: View {
         }
     }
 
+    private static let targetColor = Color.orange
+
     private func drawLabels(_ context: inout GraphicsContext, labels: [PlacedLabel]) {
         for label in labels {
             let summit = label.summit
             var leader = Path()
             leader.move(to: summit)
             leader.addLine(to: CGPoint(x: summit.x, y: label.frame.maxY))
-            context.stroke(leader, with: .color(.white.opacity(0.8)), lineWidth: 1)
+            context.stroke(leader, with: .color(label.isTarget ? Self.targetColor : .white.opacity(0.8)),
+                           lineWidth: label.isTarget ? 2 : 1)
             context.fill(Path(ellipseIn: CGRect(x: summit.x - 2.5, y: summit.y - 2.5, width: 5, height: 5)),
                          with: .color(.white))
 
             let background = Path(roundedRect: label.frame, cornerRadius: label.frame.height / 2)
-            context.fill(background, with: .color(.black.opacity(0.38)))
-            context.stroke(background, with: .color(.white.opacity(0.18)), lineWidth: 0.5)
+            if label.isTarget {
+                context.fill(background, with: .color(Self.targetColor))
+            } else {
+                context.fill(background, with: .color(.black.opacity(0.38)))
+                context.stroke(background, with: .color(.white.opacity(0.18)), lineWidth: 0.5)
+            }
 
             let title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-            let detail = Text(" " + label.detail).font(.system(size: 11, weight: .regular)).foregroundStyle(.white.opacity(0.7))
+            let detail = Text(" " + label.detail).font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.white.opacity(label.isTarget ? 0.9 : 0.7))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
                          anchor: .leading)
+        }
+    }
+
+    /// The search target: a ring around its summit when on screen, else a marker at the screen edge pointing
+    /// the way to turn.
+    private func drawSearchTarget(_ context: inout GraphicsContext, target: VisiblePeak, pose: CameraPose, size: CGSize) {
+        let width = Double(size.width), height = Double(size.height)
+        // Clear of the top bar (compass, location) and the bottom bar (chip, buttons).
+        let landscape = width > height
+        if let marker = PeakSearch.edgeMarker(azimuth: target.azimuth, altitude: target.altitude, pose: pose,
+                                              width: width, height: height, inset: 34,
+                                              topInset: landscape ? 110 : 160, bottomInset: landscape ? 120 : 160) {
+            let center = CGPoint(x: marker.x, y: marker.y)
+            let radius: CGFloat = 20
+            context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                                width: radius * 2, height: radius * 2)),
+                         with: .color(Self.targetColor))
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                                  width: radius * 2, height: radius * 2)),
+                           with: .color(.white.opacity(0.9)), lineWidth: 1.5)
+            // Arrow pointing towards the peak.
+            var arrow = context
+            arrow.translateBy(x: center.x, y: center.y)
+            arrow.rotate(by: .radians(marker.angle))
+            var head = Path()
+            head.move(to: CGPoint(x: 9, y: 0))
+            head.addLine(to: CGPoint(x: -5, y: -8))
+            head.addLine(to: CGPoint(x: -1, y: 0))
+            head.addLine(to: CGPoint(x: -5, y: 8))
+            head.closeSubpath()
+            arrow.fill(head, with: .color(.white))
+            return
+        }
+        guard let s = pose.project(azimuth: target.azimuth, altitude: target.altitude) else { return }
+        let center = CGPoint(x: s.x, y: s.y)
+        for (radius, opacity) in [(CGFloat(11), 1.0), (CGFloat(17), 0.45)] {
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                                  width: radius * 2, height: radius * 2)),
+                           with: .color(Self.targetColor.opacity(opacity)), lineWidth: 2.5)
         }
     }
 
@@ -342,6 +396,7 @@ struct PanoramaView: View {
         var detail: String
         var summit: CGPoint
         var frame: CGRect
+        var isTarget = false
     }
 
     private func layoutLabels(pose: CameraPose, size: CGSize) -> [PlacedLabel] {
@@ -361,10 +416,20 @@ struct PanoramaView: View {
         let viewAz = pose.azimuth
         let maxOff = pose.maxVisibleAngle(width: size.width, height: size.height)
         let screenWidth = Double(size.width), screenHeight = Double(size.height)
+        // The search target always gets a label, placed first, whatever its importance.
+        let targetID = model.searchTarget?.id
+        if let targetID, let i = labelMemory.entryIndex[targetID] {
+            let e = entries[i]
+            if let s = pose.project(azimuth: e.visible.azimuth, altitude: e.visible.altitude),
+               s.x > -20, s.x < screenWidth + 20, s.y > topInset, s.y < screenHeight {
+                entryIndex[targetID] = i
+                candidates.append(.init(id: targetID, x: s.x, y: s.y, width: e.width, priority: 1_000))
+            }
+        }
         for (i, e) in entries.enumerated() {
             let v = e.visible
             if v.peak.importance < minImportance { break }  // sorted by importance: the rest are smaller
-            guard abs(Geo.angleDifference(v.azimuth, viewAz)) <= maxOff,
+            guard v.id != targetID, abs(Geo.angleDifference(v.azimuth, viewAz)) <= maxOff,
                   let s = pose.project(azimuth: v.azimuth, altitude: v.altitude),
                   s.x > -20, s.x < screenWidth + 20, s.y > topInset, s.y < screenHeight else { continue }
             entryIndex[v.id] = i
@@ -378,7 +443,8 @@ struct PanoramaView: View {
             guard let i = entryIndex[p.id] else { return nil }
             let e = entries[i]
             return PlacedLabel(peak: e.visible, name: e.name, detail: e.detail, summit: CGPoint(x: p.summitX, y: p.summitY),
-                               frame: CGRect(x: p.x, y: p.y + 2, width: p.width, height: p.height - 4))
+                               frame: CGRect(x: p.x, y: p.y + 2, width: p.width, height: p.height - 4),
+                               isTarget: p.id == targetID)
         }
     }
 

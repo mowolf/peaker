@@ -95,7 +95,7 @@ SELECT p.* FROM peaks_fts f JOIN peaks p ON p.rowid = f.rowid WHERE peaks_fts MA
 ### Stable peak IDs (decision F-5)
 
 `wd:Q1374` when the peak has a Wikidata item, else `osm:n<node id>`, else `gn:<geonames id>`.
-Diary entries (V2) store this ID plus the coordinates. To resolve one: look up `peaks.id`,
+Peak book entries (v0.2, TODO B-1) store this ID plus a snapshot of name, elevation and coordinates. To resolve one: look up `peaks.id`,
 then `peak_aliases`, then the nearest peak within ~200 m.
 
 ## App download flow

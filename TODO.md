@@ -29,7 +29,7 @@ These choices affect everything after them, so settle them first.
 - [x] **F-4** Set the maximum view distance (proposal: 250 km) and the **border buffer** for country packs.
       Ridges are often visible across borders (e.g. the Alps from southern Germany), so a pack should
       include tiles within X km of the border, or the app should suggest neighbouring packs.
-- [x] **F-5** Define a **stable peak ID** (needed by the V2 diary). OSM node IDs can change when a node is
+- [x] **F-5** Define a **stable peak ID** (needed by the v0.2 peak book). OSM node IDs can change when a node is
       deleted and recreated. Proposal: `wd:Q1374` if a Wikidata ID exists, else `osm:n123456`. Keep an
       alias table across dataset versions, and use coordinates as a fallback when matching.
 - [x] **F-6** Review licenses and write `ATTRIBUTION.md` (Copernicus, OSM ODbL share-alike for the peak DB,
@@ -174,68 +174,111 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       with large packs.
 - [x] **V-7** *(the first Xcode build with complete checking had no concurrency warnings)* Switch the app to
       Swift 6 language mode.
+- [x] **V-8** Peak search: find a peak visible from here by name (any language, accents ignored); it is highlighted
+      in the view, an edge marker and a "Turn 42° right" chip show the way while it is off screen.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
-- [ ] **V-6** App icon, screenshots, privacy policy, TestFlight beta, App Store submission.
+- [ ] **V-6** *(icon done)* App icon, screenshots, privacy policy, TestFlight beta, App Store submission.
 
 ---
 
-# V2 — Peak book / peak diary
+# V0.2 — Peak book: climbed peaks and diary entries
 
-## Milestone 10 — Diary entries as Markdown in iCloud
+**Design (decided before starting):**
+- **The Markdown files are the only source of truth.** Marking a peak as climbed writes an entry file
+  (front matter only, empty body); writing a diary is the same file with text. There is no database to keep in sync;
+  the app's index is a cache that can be rebuilt from the files at any time.
+- **One file per outing, flat folder, linked to peaks by front matter, not by path.** Renaming or moving files in
+  the Files app never breaks the link, and a tour over several summits is one entry.
+- **Each entry stores a snapshot of its peaks** (ID, name, elevation, coordinates), so the peak book works without
+  the country's data on the phone and survives peak data rebuilds.
+- **Local first, iCloud second.** Milestones 10–11 store files in the app's Documents folder (visible in Files ›
+  On My iPhone › Peaker); milestone 12 moves them to iCloud Drive. Each step is usable on its own.
+- **No third-party dependencies:** a small front matter reader/writer in PeakerKit (tested on Linux), SwiftUI
+  `TextEditor` for editing, `AttributedString(markdown:)` for the preview.
+- **Wishlist = entries with `status: planned`.** No date needed; the body holds plans (route, huts, notes). "Mark as
+  climbed" turns the same file into the diary entry, so the plans become the start of the story.
+- The peak book is a list in v0.2; the map for browsing entries follows in v0.3.
 
-- [ ] **B-1** iCloud Drive container (`NSUbiquitousContainers`, `NSUbiquitousContainerIsDocumentScopePublic = YES`)
-      so the files show up in the Files app as **iCloud Drive › Peaker**.
-- [ ] **B-2** Folder layout (proposal):
-      ```
-      Peaker/
-        Peaks/
-          matterhorn--wd-Q1374/
-            2026-08-14.md
-            images/
-              2026-08-14-01.heic
-      ```
-- [ ] **B-3** Markdown format with YAML front matter. The body is free Markdown that the user can also edit outside the app:
+## Milestone 10 — Entry files and climbed peaks
+
+- [ ] **B-1** Entry format (PeakerKit `PeakEntry`): YAML front matter + free Markdown body. File name
+      `2026-08-14 Matterhorn.md` (date, first peak; a number is added on clashes); wishlist entries
+      `Matterhorn.md`, renamed with the date once climbed. Only the keys below are read;
+      unknown keys and comments are kept unchanged when the app saves, so hand edits survive:
       ```markdown
       ---
-      peak_id: wd:Q1374
-      osm_id: n123456
-      name: Matterhorn
-      elevation: 4478
-      lat: 45.9763
-      lon: 7.6586
       date: 2026-08-14
-      summited: true
+      status: summited        # or: attempted, planned (wishlist; date optional)
+      peaks:
+        - id: wd:Q1374        # stable ID (F-5)
+          name: Matterhorn
+          elevation: 4478
+          lat: 45.9763
+          lon: 7.6586
       companions: [Anna]
       ---
-      # Matterhorn via Hörnli ridge
+      # Matterhorn via the Hörnli ridge
       Text …
-      ![Summit](images/2026-08-14-01.heic)
       ```
-- [ ] **B-4** File handling with `NSFileCoordinator`/`NSFilePresenter`. Watch for remote changes with `NSMetadataQuery`
-      and download evicted files on demand (`startDownloadingUbiquitousItem`).
-- [ ] **B-5** Conflicts: detect `NSFileVersion` conflicts and let the user choose or merge.
-- [ ] **B-6** Fallback when iCloud is off: store locally and migrate once iCloud becomes available.
-- [ ] **B-7** Editor: Markdown text editor with a small toolbar + preview (e.g. swift-markdown / MarkdownUI).
-- [ ] **B-8** Entry points: tap a peak in the viewer/map → "Add entry". List of all entries per peak and overall.
-- [ ] **B-9** Robust parsing: entries edited outside the app (missing fields, renamed folders) still work.
-      Match to peaks by `peak_id` → `osm_id` → coordinates.
+- [ ] **B-2** Reader/writer with unit tests: round trip, missing or misspelt fields, extra keys, Windows line endings,
+      files without front matter (shown as "unlinked", not dropped).
+- [ ] **B-3** Peak matching: `id` → `peak_aliases` → nearest peak within 200 m of the snapshot coordinates
+      (`PeakDatabase.peak(id:)` and `peak(near:)`); no match keeps the snapshot.
+- [ ] **B-4** `PeakBook` store (main actor): scans the folder at launch and on changes, keeps the index
+      (peak ID → entries) cached in Application Support, writes files atomically.
+- [ ] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
+      peak's entries. Climbing a wishlist peak updates its planned entry instead of adding a second file.
+- [ ] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
+- [ ] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
 
-## Milestone 11 — Images in entries
+## Milestone 11 — Peak book and diary
 
-- [ ] **I-1** Add photos with `PhotosPicker` and the camera, including the AR snapshot from R-6.
-- [ ] **I-2** Copy into the entry's `images/` folder (HEIC/JPEG, configurable max size) and insert a relative Markdown link.
-- [ ] **I-3** Privacy toggle: keep or strip EXIF GPS data.
-- [ ] **I-4** Thumbnail cache (local, not in iCloud) and a gallery view per peak.
-- [ ] **I-5** Delete images along with their entry. Find orphaned images.
+- [ ] **B-8** Peak book screen (from Settings or the chip menu): tabs Climbed / Wishlist, climbed entries grouped by
+      year, search by peak name.
+- [ ] **B-9** Editor: date, status and peaks at the top, Markdown body with a small toolbar (heading, bold, list),
+      Edit/Preview toggle. Autosaves.
+- [ ] **B-10** Add or remove peaks of an entry (search the installed peak databases with FTS).
+- [ ] **B-11** Statistics: peaks climbed, highest peak, per year and per country.
+- [ ] **B-12** Delete an entry (with confirmation); the file goes, the index follows.
 
-## Milestone 12 — Visited peaks
+## Milestone 12 — iCloud Drive
 
-- [ ] **X-1** Build a local index of visited peaks by scanning the front matter of all entries; update it on file changes.
-- [ ] **X-2** Draw visited peaks differently in the viewer and on the map (colour/icon, e.g. ✓ marker).
-- [ ] **X-3** Filters: show only visited / not visited.
-- [ ] **X-4** Statistics: number of peaks, highest peak, per country / per year.
-- [ ] **X-5** "Summit detection": when the user is within ~X m horizontally and vertically of a peak, suggest creating an entry.
+- [ ] **B-13** iCloud container (`NSUbiquitousContainers`, `NSUbiquitousContainerIsDocumentScopePublic = YES`), so
+      the files appear as **iCloud Drive › Peaker**. Needs the iCloud capability on the App ID (Apple Developer
+      portal) before TestFlight builds can use it.
+- [ ] **B-14** File access through `NSFileCoordinator`; changes from other devices via `NSMetadataQuery`; download
+      evicted files on demand (`startDownloadingUbiquitousItem`).
+- [ ] **B-15** Conflicts (`NSFileVersion`): keep both as separate files and show a badge. No merge UI in v0.2.
+- [ ] **B-16** Move local entries to iCloud when it becomes available; keep working locally when it is off.
+
+# V0.3 — Map and photos
+
+## Milestone 13 — Peak map
+
+Our own map drawn from the elevation tiles already on the phone: relief and peaks only, no roads or towns. It works
+fully offline, costs no map licence, and can be styled to match the viewer.
+
+- [ ] **M-1** Renderer in PeakerKit: hillshade + contour lines from the 90 m / 30 m tiles (30 m when zoomed in), drawn
+      into map tiles (Web Mercator, 256 px) and cached on disk. Test on Linux like the horizon engine.
+- [ ] **M-2** Look: soft hillshade, thin contours every 100/500 m depending on zoom, water/sea as flat areas
+      (height ≤ 0), light and dark styles. Areas without data are shown plainly as such.
+- [ ] **M-3** Map view: `MapKit` with our tiles as the only layer (`MKTileOverlay`, `canReplaceMapContent`), or a
+      SwiftUI canvas if MapKit gets in the way; pan, zoom, rotate, current position.
+- [ ] **M-4** Peaks on the map from the installed peak databases, thinned by importance per zoom level (as the viewer's
+      label priority); ✓ climbed, ☆ wishlist, tap → peak detail.
+- [ ] **M-5** Peak search (FTS over all installed databases, also alternate names) that flies to the peak.
+- [ ] **M-6** Browse entries: filter Climbed / Wishlist / All, entry pins open the entry; "Show on map" from the
+      peak book and the peak detail.
+- [ ] **M-7** Measure: draw time and memory per tile, cache size limit; tiles of removed countries are dropped.
+
+## Milestone 14 — Photos in entries
+
+- [ ] **I-1** Add photos with `PhotosPicker` or the camera, including the AR snapshot (R-6).
+- [ ] **I-2** Store them next to the entries in `images/` (HEIC, max size setting) and insert a relative Markdown link.
+- [ ] **I-3** Privacy: remove EXIF location by default, with a setting to keep it.
+- [ ] **I-4** Local thumbnail cache (not in iCloud) and a gallery per peak.
+- [ ] **I-5** Delete photos with their entry; find unused photos.
 
 ---
 
@@ -247,6 +290,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - Share a panorama as an image/link
 - [x] 30 m packs near the viewer *(done: Copernicus GLO-30)*; even higher-resolution packs (lidar DEMs like swissALTI3D, Austrian/German state DEMs) for selected countries
 - Android version (the data pipeline and pack format stay the same)
+- Map extras: hiking routes or GPX tracks of entries, huts and passes
 
 ## Open questions
 
