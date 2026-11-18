@@ -125,9 +125,10 @@ def main(argv: list[str] | None = None) -> None:
 
     elif args.cmd == "outlines":
         from .countries import load_countries
-        from .outlines import write_outlines
+        from .outlines import load_lakes, write_outlines
 
-        print(json.dumps(write_outlines(load_countries(args.cache), args.dest, args.tolerance)))
+        print(json.dumps(write_outlines(load_countries(args.cache), args.dest, args.tolerance,
+                                        lakes=load_lakes(args.cache))))
 
     elif args.cmd == "publish":
         from .publish import publish

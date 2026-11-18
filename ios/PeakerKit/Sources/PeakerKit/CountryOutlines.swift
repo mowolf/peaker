@@ -10,10 +10,15 @@ public struct CountryOutlines: Sendable {
     }
 
     public var countries: [Country]
+    /// Larger lakes (painted as water, also over downloaded terrain).
+    public var lakes: [Country] = []
+
+    /// Mask value of lake pixels.
+    public static let lake = UInt16.max
 
     public enum DecodingError: Error { case badHeader, truncated }
 
-    public init(countries: [Country]) { self.countries = countries }
+    public init(countries: [Country], lakes: [Country] = []) { self.countries = countries; self.lakes = lakes }
 
     public init(data: Data) throws {
         let bytes = [UInt8](data)
@@ -54,10 +59,12 @@ public struct CountryOutlines: Sendable {
             }
             countries.append(Country(code: code, rings: rings, west: w, south: s, east: e, north: n))
         }
-        self.countries = countries
+        self.countries = countries.filter { $0.code != "~~" }
+        lakes = countries.filter { $0.code == "~~" }
     }
 
-    /// Which country each pixel of a `width`×`height` image lies in: index into `countries` + 1, 0 for sea.
+    /// Which country each pixel of a `width`×`height` image lies in: index into `countries` + 1, 0 for sea,
+    /// `CountryOutlines.lake` for lakes.
     /// `pixel` maps a (longitude, latitude) to fractional pixel coordinates (x right, y down); the image covers
     /// `bounds` (west, south, east, north) so countries outside it are skipped.
     public func mask(width: Int, height: Int, bounds: (west: Double, south: Double, east: Double, north: Double),
@@ -68,6 +75,18 @@ public struct CountryOutlines: Sendable {
                   Double(country.north) >= bounds.south, Double(country.south) <= bounds.north else { continue }
             let rings = country.rings.map { ring in ring.map { p in pixel(Double(p.x), Double(p.y)) } }
             Self.fill(rings, value: UInt16(index + 1), into: &mask, width: width, height: height)
+        }
+        for lakes in self.lakes {
+            // Lake by lake (each ring is a lake; islands inside are their own rings), skipping those outside.
+            for ring in lakes.rings {
+                guard let first = ring.first else { continue }
+                var w = first.x, e = first.x, s = first.y, n = first.y
+                for p in ring { w = min(w, p.x); e = max(e, p.x); s = min(s, p.y); n = max(n, p.y) }
+                guard Double(e) >= bounds.west, Double(w) <= bounds.east, Double(n) >= bounds.south,
+                      Double(s) <= bounds.north else { continue }
+                Self.fill([ring.map { p in pixel(Double(p.x), Double(p.y)) }], value: Self.lake, into: &mask,
+                          width: width, height: height)
+            }
         }
         return mask
     }
@@ -116,18 +135,38 @@ public extension MapStyle {
         let w = grid.width, h = grid.height
         let land = unknownLand
         let border = contourColor
+        // Water: sea level in the data, or outside any country where there is no data.
+        func isWater(_ i: Int) -> Bool {
+            if mask[i] == CountryOutlines.lake { return true }
+            let v = grid.heights[i]
+            return v.isNaN ? mask[i] == 0 : v <= 0.5
+        }
         for row in 0..<h {
             for col in 0..<w {
                 let i = row * w + col
                 let country = mask[i]
                 var c: (r: Float, g: Float, b: Float)?
-                if grid.heights[i].isNaN {
+                if country == CountryOutlines.lake {
+                    c = water
+                } else if grid.heights[i].isNaN {
                     c = country == 0 ? water : land
+                }
+                // Coast: water next to land, drawn on the water side.
+                if isWater(i) {
+                    let neighbours = [col > 0 ? i - 1 : i, col + 1 < w ? i + 1 : i, row > 0 ? i - w : i, row + 1 < h ? i + w : i]
+                    if neighbours.contains(where: { !isWater($0) }) {
+                        out[i * 4] = UInt8(coast.r * 255)
+                        out[i * 4 + 1] = UInt8(coast.g * 255)
+                        out[i * 4 + 2] = UInt8(coast.b * 255)
+                        continue
+                    }
                 }
                 // A border between two countries (coasts are clear enough from the colours).
                 let right = col + 1 < w ? mask[i + 1] : country
                 let below = row + 1 < h ? mask[i + w] : country
-                if country != 0, (right != 0 && right != country) || (below != 0 && below != country) {
+                let lake = CountryOutlines.lake
+                if country != 0, country != lake,
+                   (right != 0 && right != lake && right != country) || (below != 0 && below != lake && below != country) {
                     let base = c ?? (Float(out[i * 4]) / 255, Float(out[i * 4 + 1]) / 255, Float(out[i * 4 + 2]) / 255)
                     let a: Float = 0.7
                     c = (base.r + (border.r - base.r) * a, base.g + (border.g - base.g) * a, base.b + (border.b - base.b) * a)

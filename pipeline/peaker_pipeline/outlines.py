@@ -9,6 +9,9 @@ Binary, little-endian::
 Rings are outer boundaries and holes alike: the app fills them with the even-odd rule (Lesotho stays a hole
 in South Africa, Vatican City in Italy). The app ships the file and draws the world from it: every country,
 whether its terrain is downloaded or not.
+
+Lakes (Natural Earth 10 m lakes, world and Europe, larger than ~20 km²) follow as one more entry with the code ``~~``; the app
+paints them as water, also over downloaded terrain (the elevation data has no water).
 """
 
 from __future__ import annotations
@@ -22,6 +25,11 @@ from .countries import Country
 
 MAGIC = b"PKOL"
 VERSION = 1
+LAKES_CODE = "~~"
+LAKES_URLS = ["https://naciscdn.org/naturalearth/10m/physical/ne_10m_lakes.zip",
+              # More European lakes (Lake Zurich, Lago Maggiore's arms, ...), which the world layer leaves out.
+              "https://naciscdn.org/naturalearth/10m/physical/ne_10m_lakes_europe.zip"]
+MIN_LAKE_DEG2 = 0.0025  # ~20 km² at mid latitudes
 
 
 def rings(geometry, tolerance: float) -> list[list[tuple[float, float]]]:
@@ -39,13 +47,15 @@ def rings(geometry, tolerance: float) -> list[list[tuple[float, float]]]:
     return out
 
 
-def encode(countries: dict[str, Country], tolerance: float = 0.02) -> bytes:
+def encode(countries: dict[str, Country], tolerance: float = 0.02, lakes=None) -> bytes:
     body = bytearray()
     count = 0
-    for code in sorted(countries):
-        if len(code) != 2 or not code.isalpha():
-            continue
-        rs = rings(countries[code].geometry, tolerance)
+    entries = [(code, countries[code].geometry) for code in sorted(countries) if len(code) == 2 and code.isalpha()]
+    if lakes is not None:
+        entries.append((LAKES_CODE, lakes))
+    for code, geometry in entries:
+        # Lakes are simplified less: they are small, and a shoreline cut short looks wrong.
+        rs = rings(geometry, tolerance / 2 if code == LAKES_CODE else tolerance)
         if not rs:
             continue
         count += 1
@@ -54,6 +64,24 @@ def encode(countries: dict[str, Country], tolerance: float = 0.02) -> bytes:
             body += struct.pack("<I", len(ring))
             body += struct.pack(f"<{2 * len(ring)}f", *[v for p in ring for v in p])
     return MAGIC + struct.pack("<HH", VERSION, count) + bytes(body)
+
+
+def load_lakes(cache_dir: Path):
+    """Natural Earth 10 m lakes (world and Europe) larger than MIN_LAKE_DEG2, as one (multi)polygon."""
+    import pyogrio
+    from shapely import from_wkb
+    from shapely.ops import unary_union
+
+    from .http import download
+
+    polys = []
+    for url in LAKES_URLS:
+        path = Path(cache_dir) / "naturalearth" / url.rsplit("/", 1)[1]
+        if not path.exists():
+            download(url, path)
+        _, _, geoms, _ = pyogrio.raw.read(f"/vsizip/{path}", columns=[])
+        polys += [g for g in (from_wkb(w) for w in geoms if w is not None) if g.area >= MIN_LAKE_DEG2]
+    return unary_union(polys)
 
 
 def decode(data: bytes) -> dict[str, list[list[tuple[float, float]]]]:
@@ -76,8 +104,8 @@ def decode(data: bytes) -> dict[str, list[list[tuple[float, float]]]]:
     return out
 
 
-def write_outlines(countries: dict[str, Country], dest: Path, tolerance: float = 0.02) -> dict:
-    data = encode(countries, tolerance)
+def write_outlines(countries: dict[str, Country], dest: Path, tolerance: float = 0.02, lakes=None) -> dict:
+    data = encode(countries, tolerance, lakes)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     decoded = decode(data)
