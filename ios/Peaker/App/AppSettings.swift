@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PeakerKit
 
 enum UnitSystem: String, CaseIterable, Identifiable {
     case metric, imperial
@@ -13,6 +14,14 @@ enum LabelDensity: String, CaseIterable, Identifiable {
     var title: String { rawValue.capitalized }
     var maxLabels: Int { switch self { case .few: 12; case .normal: 25; case .many: 45 } }
     var minImportance: Double { switch self { case .few: 0.55; case .normal: 0.35; case .many: 0.0 } }
+}
+
+/// Look of the 3D map (PeakerKit `MapStyle`).
+enum MapStyleChoice: String, CaseIterable, Identifiable {
+    case dusk, alpine
+    var id: String { rawValue }
+    var title: String { self == .dusk ? "Dusk" : "Alpine" }
+    var style: MapStyle { self == .dusk ? .dusk : .alpine }
 }
 
 /// User settings, persisted in UserDefaults.
@@ -37,6 +46,10 @@ final class AppSettings {
         didSet { defaults.set(dismissedSummitPrompt, forKey: "dismissedSummitPrompt") }
     }
 
+    var mapStyle: MapStyleChoice { didSet { defaults.set(mapStyle.rawValue, forKey: "mapStyle") } }
+    /// Height exaggeration of the 3D map (1 = true to scale).
+    var mapExaggeration: Double { didSet { defaults.set(mapExaggeration, forKey: "mapExaggeration") } }
+
     init() {
         maxDistanceKm = defaults.object(forKey: "maxDistanceKm") as? Double ?? 200
         eyeHeight = defaults.object(forKey: "eyeHeight") as? Double ?? 1.8
@@ -45,6 +58,8 @@ final class AppSettings {
         fixedViewpointID = defaults.string(forKey: "fixedViewpointID") ?? ""
         allowsMobileDataDownloads = defaults.bool(forKey: "allowsMobileDataDownloads")  // default false
         dismissedSummitPrompt = defaults.string(forKey: "dismissedSummitPrompt") ?? ""
+        mapStyle = MapStyleChoice(rawValue: defaults.string(forKey: "mapStyle") ?? "") ?? .dusk
+        mapExaggeration = defaults.object(forKey: "mapExaggeration") as? Double ?? 1.3
     }
 
     /// Language for peak names: the device's language (OSM/Wikidata `name:<code>`).

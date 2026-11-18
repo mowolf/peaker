@@ -18,6 +18,8 @@ final class AppModel {
     let horizonStore = HorizonStore()
     /// Climbed peaks, wishlist and diary entries (Markdown files in Documents).
     let peakBook = PeakBook()
+    /// The 3D map (kept while closed, so reopening shows the same place at once).
+    let map = MapModel()
 
     /// Current interface orientation (portrait, or landscape for the wide panorama view).
     private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
@@ -75,6 +77,45 @@ final class AppModel {
     var showSettings = false
     var showSearch = false
     var showPeakBook = false
+    var showMap = false
+    @ObservationIgnored private var pendingMapFocus: GeoCoordinate?
+
+    /// Open the map at a place (a peak: highlighted). Closes sheets first: the map covers the whole screen.
+    func showOnMap(coordinate: GeoCoordinate, peakID: String?) {
+        if let peakID { map.highlightedPeakID = peakID }
+        let distance: Float? = peakID == nil ? nil : 9
+        if showMap {
+            map.focus(on: coordinate, distance: distance, settings: settings, packs: packs.snapshot(),
+                      packVersion: packs.version)
+            return
+        }
+        pendingMapFocus = coordinate
+        let sheetOpen = selectedPeak != nil || showPeakBook || showSearch || showSettings || showDownloads
+        selectedPeak = nil
+        showPeakBook = false
+        showSearch = false
+        showSettings = false
+        showDownloads = false
+        if sheetOpen {
+            Task {
+                try? await Task.sleep(for: .milliseconds(450))  // let the sheet go first
+                showMap = true
+            }
+        } else {
+            showMap = true
+        }
+    }
+
+    /// The map appeared: go to the requested place, or around the viewpoint the first time.
+    func openMapIfNeeded() {
+        if let target = pendingMapFocus ?? (map.terrain == nil ? currentViewpoint : nil) {
+            pendingMapFocus = nil
+            map.focus(on: target, distance: map.highlightedPeakID == nil ? nil : 9, settings: settings,
+                      packs: packs.snapshot(), packVersion: packs.version)
+        } else {
+            map.refreshIfNeeded(settings: settings, packs: packs.snapshot(), packVersion: packs.version)
+        }
+    }
 
     /// The peak picked in search: highlighted in the view, with a marker at the screen edge while it is off screen.
     private(set) var searchTarget: VisiblePeak?

@@ -42,6 +42,20 @@ struct SettingsView: View {
                     Text("Off: countries download only over Wi-Fi (not over mobile data, a personal hotspot or in Low Data Mode). Countries are often several hundred MB. You can still allow mobile data for a single download.")
                 }
 
+                Section {
+                    Picker("Style", selection: $settings.mapStyle) {
+                        ForEach(MapStyleChoice.allCases) { Text($0.title).tag($0) }
+                    }
+                    VStack(alignment: .leading) {
+                        LabeledContent("Height exaggeration", value: String(format: "%.1f×", settings.mapExaggeration))
+                        Slider(value: $settings.mapExaggeration, in: 1...2, step: 0.1)
+                    }
+                } header: {
+                    Text("Map")
+                } footer: {
+                    Text("Exaggerated heights make the relief easier to read from far away; 1× is true to scale.")
+                }
+
                 Section("Units") {
                     Picker("Units", selection: $settings.units) {
                         ForEach(UnitSystem.allCases) { Text($0.title).tag($0) }

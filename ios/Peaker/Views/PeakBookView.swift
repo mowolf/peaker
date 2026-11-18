@@ -50,6 +50,15 @@ struct PeakBookView: View {
                             .swipeActions {
                                 Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = stored }
                             }
+                            .swipeActions(edge: .leading) {
+                                if let peak = stored.entry.peaks.first, let coordinate = peak.coordinate {
+                                    Button("Map", systemImage: "map") {
+                                        model.showOnMap(coordinate: coordinate,
+                                                        peakID: stored.resolvedIDs.first.flatMap { $0 } ?? peak.id)
+                                    }
+                                    .tint(.blue)
+                                }
+                            }
                     }
                 }
             }
