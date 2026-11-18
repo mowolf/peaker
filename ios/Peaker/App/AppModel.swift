@@ -74,6 +74,7 @@ final class AppModel {
     var showDownloads = false
     var showSettings = false
     var showSearch = false
+    var showPeakBook = false
 
     /// The peak picked in search: highlighted in the view, with a marker at the screen edge while it is off screen.
     private(set) var searchTarget: VisiblePeak?

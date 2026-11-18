@@ -111,6 +111,12 @@ private struct EntryRow: View {
                 if let line = summary {
                     Text(line).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
+                NavigationLink {
+                    EntryEditorView(stored: stored)
+                } label: {
+                    Label(summary == nil ? "Write about it" : "Open notes", systemImage: "square.and.pencil")
+                        .font(.footnote.weight(.semibold))
+                }
                 if !entry.companions.isEmpty {
                     Label(entry.companions.joined(separator: ", "), systemImage: "person.2")
                         .font(.caption)

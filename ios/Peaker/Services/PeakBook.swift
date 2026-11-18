@@ -170,11 +170,15 @@ final class PeakBook {
     }
 
     /// Save changes to an entry. A file that still has the name the app gave it is renamed when that name
-    /// changes (e.g. a wishlist entry gets its date); names chosen by the user are kept.
+    /// changes (e.g. a wishlist entry gets its date); names chosen by the user are kept. The editor saves with
+    /// `rename: false` while open (the entry keeps its identity) and renames when it closes.
+    /// - Parameter namedAfter: the entry as it was when the file got its name (the editor passes the entry as
+    ///   opened, since its earlier saves already changed `stored.entry`).
     @discardableResult
-    func save(_ stored: StoredEntry, as entry: PeakEntry) throws -> StoredEntry {
+    func save(_ stored: StoredEntry, as entry: PeakEntry, rename: Bool = true,
+              namedAfter: PeakEntry? = nil) throws -> StoredEntry {
         var name = stored.fileName
-        if stored.entry.hasAutomaticName(stored.fileName), !entry.hasAutomaticName(stored.fileName) {
+        if rename, (namedAfter ?? stored.entry).hasAutomaticName(stored.fileName), !entry.hasAutomaticName(stored.fileName) {
             let others = Set(entries.map(\.fileName)).subtracting([stored.fileName])
             name = PeakEntry.uniqueFileName(entry.suggestedFileName, existing: others)
         }
@@ -182,10 +186,9 @@ final class PeakBook {
         if name != stored.fileName {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(stored.fileName))
         }
-        var resolved = stored.resolvedIDs
-        if resolved.count != entry.peaks.count {
-            resolved = entry.peaks.map { $0.id }  // peaks edited: resolved again on the next reload
-        }
+        // Peaks edited: the IDs as written (peaks picked from the database carry their current ID); matched
+        // properly again on the next reload.
+        let resolved = entry.peaks == stored.entry.peaks ? stored.resolvedIDs : entry.peaks.map(\.id)
         let updated = StoredEntry(fileName: name, entry: entry, modified: Date(), resolvedIDs: resolved)
         changed { list in
             list.removeAll { $0.fileName == stored.fileName }
