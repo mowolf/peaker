@@ -8,16 +8,13 @@ struct InstalledPack: Codable, Hashable, Identifiable {
     var name: String
     var builtAt: String
     var tiles: [String]
-    /// File name of the peak DB in the packs' peaks directory (or inside the bundle for the demo).
+    /// File name of the peak DB in the packs' peaks directory.
     var peaksFile: String
     var bytes: Int
     var peakCount: Int
-    var isBundled: Bool
-    /// Folder name under `BundledPacks/` for packs shipped with the app.
-    var bundleFolder: String?
     /// High-detail (30 m) tiles of the pack, if it has them. `tiles` are the 90 m ones.
     var tiles30: [String]?
-    var id: String { isBundled ? "bundled-\(code)" : code }
+    var id: String { code }
 
     /// Tile names per resolution ("90", "30").
     var tilesByResolution: [String: Set<String>] {
@@ -43,7 +40,7 @@ struct DownloadState: Equatable {
     var fraction: Double { bytesTotal > 0 ? Double(bytesDone) / Double(bytesTotal) : 0 }
 }
 
-/// Offline packs: the bundled ones, downloaded countries, the catalog, and downloads.
+/// Offline packs: downloaded countries, the catalog, and downloads.
 ///
 /// Downloaded tiles live in one shared store (`tiles/<resolution>/<name>.pkt`), used by every pack that
 /// lists them. `TileLedger` decides what may be deleted: a tile stays while an installed pack or a running
@@ -79,8 +76,6 @@ final class PackStore {
     private var installedFile: URL { root.appendingPathComponent("installed.json") }
     private var catalogFile: URL { root.appendingPathComponent("catalog.json") }
     private var checksumsFile: URL { root.appendingPathComponent("tile-checksums.json") }
-    /// Packs shipped inside the app: one folder per pack with manifest.json, tiles/90/*.pkt, peaks.sqlite.
-    private let bundledRoot = Bundle.main.url(forResource: "BundledPacks", withExtension: nil)
 
     init() {
         let raw = (Bundle.main.object(forInfoDictionaryKey: "PeakerDataURL") as? String)?
@@ -105,12 +100,11 @@ final class PackStore {
         if FileManager.default.fileExists(atPath: installedFile.path) {
             if let data = try? Data(contentsOf: installedFile),
                let list = try? JSONDecoder().decode([InstalledPack].self, from: data) {
-                installed = list.filter { !$0.isBundled }
+                installed = list
             } else {
                 installedListReadable = false
             }
         }
-        installed.insert(contentsOf: loadBundledPacks(), at: 0)
         if let data = try? Data(contentsOf: catalogFile) {
             catalog = try? Catalog.decode(data)
         }
@@ -121,28 +115,6 @@ final class PackStore {
         if installedListReadable { removeUnusedTiles() }
     }
 
-    private func loadBundledPacks() -> [InstalledPack] {
-        guard let bundledRoot,
-              let folders = try? FileManager.default.contentsOfDirectory(atPath: bundledRoot.path) else { return [] }
-        var packs: [InstalledPack] = []
-        for folder in folders.sorted() {
-            let manifestURL = bundledRoot.appendingPathComponent(folder).appendingPathComponent("manifest.json")
-            guard let data = try? Data(contentsOf: manifestURL), let m = try? PackManifest.decode(data) else { continue }
-            let tiles = m.tiles["90"] ?? []
-            var bytes = m.peaks.bytes
-            for t in tiles { bytes += t.bytes }
-            packs.append(InstalledPack(code: m.code, name: m.name, builtAt: m.builtAt, tiles: tiles.map(\.name),
-                                       peaksFile: m.peaks.path, bytes: bytes, peakCount: m.peaks.count,
-                                       isBundled: true, bundleFolder: folder))
-        }
-        return packs
-    }
-
-    private func bundledURL(_ pack: InstalledPack, _ relativePath: String) -> URL? {
-        guard let bundledRoot, let folder = pack.bundleFolder else { return nil }
-        return bundledRoot.appendingPathComponent(folder).appendingPathComponent(relativePath)
-    }
-
     // MARK: - Lookup
 
     func snapshot() -> PackSnapshot {
@@ -151,29 +123,19 @@ final class PackStore {
         var dbs: [URL] = []
         for pack in installed {
             for name in pack.tiles {
-                guard let id = TileID(name: name) else { continue }
-                if pack.isBundled {
-                    if files[id] == nil, let url = bundledURL(pack, "tiles/90/\(name).pkt") { files[id] = url }
-                } else {
-                    files[id] = tilesDir("90").appendingPathComponent("\(name).pkt")  // downloaded tiles win
-                }
+                if let id = TileID(name: name) { files[id] = tilesDir("90").appendingPathComponent("\(name).pkt") }
             }
             for name in pack.tiles30 ?? [] {
                 if let id = TileID(name: name) { files30[id] = tilesDir("30").appendingPathComponent("\(name).pkt") }
             }
-            if pack.isBundled {
-                if let url = bundledURL(pack, pack.peaksFile) { dbs.append(url) }
-            } else {
-                dbs.append(peaksDir.appendingPathComponent(pack.peaksFile))
-            }
+            dbs.append(peaksDir.appendingPathComponent(pack.peaksFile))
         }
         return PackSnapshot(tileFiles: files, tileFiles30: files30, peakDatabases: dbs, landTiles: catalog?.landTiles())
     }
 
-    /// Downloaded (not bundled) copy of a country, if any.
-    func isDownloaded(_ code: String) -> Bool { installed.contains { $0.code == code && !$0.isBundled } }
+    func isDownloaded(_ code: String) -> Bool { installed.contains { $0.code == code } }
 
-    var downloadedBytes: Int { installed.filter { !$0.isBundled }.reduce(0) { $0 + $1.bytes } }
+    var downloadedBytes: Int { installed.reduce(0) { $0 + $1.bytes } }
 
     /// Countries to suggest for a viewpoint that aren't downloaded yet: the one it's in, and up to four
     /// others within the view distance (see `CountrySuggestions`).
@@ -214,7 +176,7 @@ final class PackStore {
     /// Which downloaded pack owns which tiles, plus the tiles running downloads need.
     private var ledger: TileLedger {
         var ledger = TileLedger()
-        for pack in installed where !pack.isBundled {
+        for pack in installed {
             ledger.installed[pack.code] = pack.tilesByResolution
         }
         ledger.reserved = reserved
@@ -338,7 +300,7 @@ final class PackStore {
         for t in tiles + tiles30 { bytes += t.bytes }
         return InstalledPack(code: manifest.code, name: manifest.name, builtAt: manifest.builtAt,
                              tiles: tiles.map(\.name), peaksFile: "\(manifest.code).sqlite",
-                             bytes: bytes, peakCount: manifest.peaks.count, isBundled: false,
+                             bytes: bytes, peakCount: manifest.peaks.count,
                              tiles30: tiles30.isEmpty ? nil : tiles30.map(\.name))
     }
 
@@ -364,7 +326,7 @@ final class PackStore {
     }
 
     private func finishInstall(_ pack: InstalledPack) {
-        installed.removeAll { $0.code == pack.code && !$0.isBundled }
+        installed.removeAll { $0.code == pack.code }
         installed.append(pack)
         reserved[pack.code] = nil
         saveInstalled()
@@ -374,9 +336,9 @@ final class PackStore {
     }
 
     func remove(_ code: String) {
-        guard let pack = installed.first(where: { $0.code == code && !$0.isBundled }) else { return }
+        guard let pack = installed.first(where: { $0.code == code }) else { return }
         deleteTiles(ledger.removable(after: code))
-        installed.removeAll { $0.code == code && !$0.isBundled }
+        installed.removeAll { $0.code == code }
         try? FileManager.default.removeItem(at: peaksDir.appendingPathComponent(pack.peaksFile))
         saveInstalled()
         saveChecksums()
@@ -386,8 +348,7 @@ final class PackStore {
     func clearError(_ code: String) { downloads[code] = nil }
 
     private func saveInstalled() {
-        let list = installed.filter { !$0.isBundled }
-        if let data = try? JSONEncoder().encode(list) {
+        if let data = try? JSONEncoder().encode(installed) {
             try? data.write(to: installedFile, options: .atomic)
         }
     }

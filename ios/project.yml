@@ -29,13 +29,6 @@ targets:
     platform: iOS
     sources:
       - path: Peaker
-        excludes:
-          - "Resources/BundledPacks"
-          - "Resources/BundledPacks/**"
-      # Offline packs shipped inside the app (one folder per pack, see pipeline `bundle` command).
-      - path: Peaker/Resources/BundledPacks
-        type: folder
-        buildPhase: resources
     dependencies:
       - package: PeakerKit
     settings:

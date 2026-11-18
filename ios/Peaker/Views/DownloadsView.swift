@@ -39,10 +39,8 @@ struct DownloadsView: View {
             ForEach(packs.installed) { pack in
                 InstalledRow(pack: pack)
                     .swipeActions {
-                        if !pack.isBundled {
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                withAnimation { packs.remove(pack.code) }
-                            }
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            withAnimation { packs.remove(pack.code) }
                         }
                     }
             }
@@ -131,7 +129,7 @@ private struct InstalledRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(pack.isBundled && pack.code.count != 2 ? "🏔️" : flag(pack.code))
+            Text(flag(pack.code))
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pack.name)
@@ -141,14 +139,8 @@ private struct InstalledRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if pack.isBundled {
-                Text("Included")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            }
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
         }
     }
 }
