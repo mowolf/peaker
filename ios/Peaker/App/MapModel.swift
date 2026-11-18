@@ -8,7 +8,8 @@ import RealityKit
 ///
 /// Two layers in one scene frame, the detailed one on top, cutting a hole into the other:
 /// - detail: 40 km at full resolution (30 m where downloaded), closer than 70 km;
-/// - regional: 80–320 km (growing with the zoom) from the 90 m tiles, with countries without data in black.
+/// - regional: 80–2,000 km (growing with the zoom; the 90 m tiles up to 320 km, smaller versions beyond), with
+///   countries without data in black.
 /// Zoomed out further the map becomes the globe. Layers are rebuilt around the view in the background when it
 /// moves or zooms far enough; nothing is swapped until the new layer is ready.
 @MainActor
@@ -34,7 +35,7 @@ final class MapModel {
     private(set) var globeEntity: ModelEntity?
 
     /// Zooming out past the flat map's farthest distance shows the globe; zooming in below this leaves it.
-    static let globeExitAltitude: Float = 140
+    static let globeExitAltitude: Float = 700
 
     /// Each level is shown (and kept up to date) closer than this camera distance (km).
     static func showDistance(_ level: MapTerrain.Level) -> Float {
@@ -57,7 +58,7 @@ final class MapModel {
     var sceneEntities: [ModelEntity] { MapTerrain.Level.allCases.filter(shows).compactMap { entities[$0] } }
 
     @ObservationIgnored private let loader = TileLoader()
-    /// ~700 m tiles for the globe's world image.
+    /// Smaller tiles for large regional squares and the globe's world image.
     @ObservationIgnored private let overviewTiles = OverviewTiles()
     @ObservationIgnored private var outlines: CountryOutlines?
     /// The latest request per level and its build.
@@ -112,8 +113,8 @@ final class MapModel {
             return layer.style != settings.mapStyle || layer.packVersion != packVersion || layer.frame != frame
         }
         // Regional: 3.5× the camera distance across (zoomed out the view looks down steeply, so that covers the
-        // screen), 80–320 km; rebuilt when the view leaves its middle or the zoom changed a lot.
-        let regional = Double(min(320, max(80, camera.distance * 3.5))) * 1000
+        // screen), 80–2,000 km; rebuilt when the view leaves its middle or the zoom changed a lot.
+        let regional = Double(min(2000, max(80, camera.distance * 3.5))) * 1000
         if stale(terrains[.regional]) || terrains[.regional]!.offCentre(camera.target) > 0.25
             || !(0.6...1.6).contains(terrains[.regional]!.size / regional) {
             build(.init(level: .regional, frame: frame, center: here, size: regional, style: settings.mapStyle,
@@ -215,11 +216,11 @@ final class MapModel {
         requested[level] = request
         tasks[level]?.cancel()
         isBuilding = true
-        let loader = loader
+        let loader = loader, overviewTiles = overviewTiles
         tasks[level] = Task {
             let outlines = await self.loadOutlines()
             let work = Task.detached(priority: level == .detail ? .userInitiated : .utility) {
-                await MapTerrain.build(request, packs: packs, loader: loader, outlines: outlines)
+                await MapTerrain.build(request, packs: packs, loader: loader, overview: overviewTiles, outlines: outlines)
             }
             let terrain = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
             var entity: ModelEntity?
