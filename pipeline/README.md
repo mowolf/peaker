@@ -39,9 +39,6 @@ peaker-pipeline pack CH --res 90 30 --tile-index out/v1 --osm-mirror osmfr --no-
 # publish into a checkout of mowolf/height-data (push tiles in < 2 GB batches)
 peaker-pipeline publish --out out --repo ../../height-data
 
-# Export a built pack for bundling in the iOS app (optionally cut to a bbox)
-peaker-pipeline bundle NP --dest ../ios/Peaker/Resources/BundledPacks/NP
-
 # Compare tile encodings (decision F-3)
 peaker-pipeline bench-encoding --res 90
 ```

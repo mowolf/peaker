@@ -1,6 +1,6 @@
 import PeakerKit
 
-/// Fixed viewpoints inside the bundled packs, for trying the app anywhere (and as fallback without GPS).
+/// Famous viewpoints for trying the app from anywhere (Settings › Viewpoint); they need the country downloaded.
 struct Viewpoint: Identifiable, Hashable {
     let id: String
     let name: String

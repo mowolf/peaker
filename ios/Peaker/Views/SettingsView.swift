@@ -77,7 +77,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Viewpoint")
                 } footer: {
-                    Text("Fixed viewpoints use the regions bundled with the app, so you can try Peaker anywhere.")
+                    Text("Famous viewpoints to try Peaker from anywhere. They need the country's offline data: Switzerland for Gornergrat, Nepal for Kala Patthar and Poon Hill.")
                 }
 
                 Section("About") {
@@ -112,8 +112,8 @@ private struct OfflineDataRow: View {
 
     private var summary: String {
         let packs = model.packs
-        let downloaded = packs.installed.filter { !$0.isBundled }.count
-        guard downloaded > 0 else { return "Only the included regions" }
+        let downloaded = packs.installed.count
+        guard downloaded > 0 else { return "No countries downloaded yet" }
         let size = ByteCountFormatter.string(fromByteCount: Int64(packs.downloadedBytes), countStyle: .file)
         return "\(downloaded) \(downloaded == 1 ? "country" : "countries") · \(size)"
     }

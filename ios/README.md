@@ -14,19 +14,9 @@ cd ios && xcodegen          # creates Peaker.xcodeproj
 open Peaker.xcodeproj       # set your team under Signing & Capabilities to run on a device
 ```
 
-Without a data server the app uses the packs bundled in `Peaker/Resources/BundledPacks/` (Zermatt demo, Nepal).
-Fixed viewpoints (Gornergrat, Kala Patthar, Poon Hill) let you try them anywhere. To try downloads, set the build
-setting `PEAKER_DATA_URL` (see `docs/ci-setup.md`).
-
-Bundled packs are exported by the pipeline:
-
-```sh
-cd pipeline
-peaker-pipeline pack NP                       # build into ./out
-peaker-pipeline bundle NP --dest ../ios/Peaker/Resources/BundledPacks/NP
-peaker-pipeline bundle CH --dest ../ios/Peaker/Resources/BundledPacks/DEMO --bbox 7,45,9,47 --code DEMO \
-    --name "Matterhorn & Bernese Alps (demo)"
-```
+The app ships without terrain data: countries are downloaded in Settings › Manage offline data from the data
+server (`PEAKER_DATA_URL`, see `docs/ci-setup.md`). Fixed viewpoints (Gornergrat, Kala Patthar, Poon Hill) in
+Settings let you try a downloaded country from anywhere.
 
 | path | what |
 |---|---|
@@ -34,7 +24,6 @@ peaker-pipeline bundle CH --dest ../ios/Peaker/Resources/BundledPacks/DEMO --bbo
 | `Peaker/App` | app entry, `AppModel` (view state, sensors, modes), `HorizonStore` (background horizon computation, visible peaks, sun), settings, fixed viewpoints |
 | `Peaker/Services` | GPS, Core Motion attitude, camera, tile loader, SQLite peak queries, `PackStore` (installed packs, tile bookkeeping) and `PackDownloader` (networking, checksums) |
 | `Peaker/Views` | viewer (camera / touch mode), panorama canvas, compass, sheets |
-| `Peaker/Resources/BundledPacks` | packs shipped in the app, one folder each (built by `pipeline/`, `bundle` command) |
 
 Concurrency: UI state is on the main actor (`AppModel`, `AppSettings`, `PackStore`, `HorizonStore` and the
 sensor services). Heavy work runs off it: the horizon sweep and tile decoding in a detached task and the

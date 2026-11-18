@@ -139,7 +139,7 @@ private struct TopBar: View {
                 HStack(spacing: 8) {
                     ViewpointChip()
                         .glassEffectID("viewpoint", in: glass)
-                    Button { model.showOnMap(coordinate: model.currentViewpoint, peakID: nil) } label: {
+                    Button { model.openMap() } label: {
                         Image(systemName: "map")
                             .font(.body.weight(.semibold))
                             .frame(width: 44, height: 44)
@@ -231,6 +231,8 @@ private struct StatusBanner: View {
                 banner(icon: "square.dashed", text: "Part of the view is outside the offline data.")
             } else if model.isFollowingDevice && model.motion.isCompassUncertain {
                 banner(icon: "exclamationmark.triangle", text: "Compass is inaccurate. Move the phone in a figure 8.")
+            } else if model.fixedViewpoint == nil && model.location.isDenied {
+                banner(icon: "location.slash", text: "Location access is off. Allow it in Settings › Peaker, or pick a viewpoint in Peaker's settings.")
             } else if model.camera.isDenied && model.showsCamera {
                 banner(icon: "camera", text: "Camera access is off. Allow it in Settings › Peaker.")
             }

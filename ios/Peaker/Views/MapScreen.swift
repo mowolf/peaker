@@ -68,7 +68,7 @@ struct MapScreen: View {
     }
 
     private func select(_ peak: PeakInfo) {
-        let from = model.currentViewpoint
+        let from = model.currentViewpoint ?? peak.coordinate
         selected = VisiblePeak(peak: peak, azimuth: Geo.bearing(from: from, to: peak.coordinate), altitude: 0,
                                distance: Geo.distance(from, peak.coordinate))
     }
@@ -198,8 +198,8 @@ struct MapScreen: View {
 
     /// Your position (GPS or the fixed viewpoint): a blue dot.
     private func drawPosition(_ context: inout GraphicsContext, size: CGSize) {
-        guard let terrain = model.map.terrain else { return }
-        var p = terrain.frame.point(model.currentViewpoint, height: 0)
+        guard let terrain = model.map.terrain, let here = model.currentViewpoint else { return }
+        var p = terrain.frame.point(here, height: 0)
         p.y = terrain.groundHeight(x: p.x, z: p.z)
         guard let s = model.map.camera.project(p, width: Float(size.width), height: Float(size.height)) else { return }
         let center = CGPoint(x: CGFloat(s.x), y: CGFloat(s.y))
@@ -299,6 +299,12 @@ private struct MapTopControls: View {
                 ProgressView()
                     .padding(12)
                     .glassEffect(.regular, in: .circle)
+            } else if map.terrain == nil {
+                Text("Waiting for your position…")
+                    .font(.footnote.weight(.medium))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular, in: .capsule)
             } else if map.terrain?.hasData == false {
                 Text("No offline data here")
                     .font(.footnote.weight(.medium))
@@ -334,7 +340,7 @@ private struct MapTopControls: View {
     }
 
     private func locate() {
-        model.showOnMap(coordinate: model.currentViewpoint, peakID: nil)
+        if let here = model.currentViewpoint { model.showOnMap(coordinate: here, peakID: nil) }
     }
 }
 

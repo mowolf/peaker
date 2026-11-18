@@ -106,6 +106,15 @@ final class AppModel {
         }
     }
 
+    /// Open the map around your position (or where it was last, before the first GPS fix).
+    func openMap() {
+        if let here = currentViewpoint {
+            showOnMap(coordinate: here, peakID: nil)
+        } else {
+            showMap = true
+        }
+    }
+
     /// The map appeared: go to the requested place, or around the viewpoint the first time.
     func openMapIfNeeded() {
         if let target = pendingMapFocus ?? (map.terrain == nil ? currentViewpoint : nil) {
@@ -143,11 +152,8 @@ final class AppModel {
         searchTarget.map { Geo.angleDifference($0.azimuth, heading) }
     }
 
-    /// The fixed viewpoint in use: the chosen one, or Gornergrat while there's no GPS fix.
-    var fixedViewpoint: Viewpoint? {
-        if let chosen = Viewpoint.with(id: settings.fixedViewpointID) { return chosen }
-        return location.location == nil ? .gornergrat : nil
-    }
+    /// The fixed viewpoint chosen in Settings, if any (else GPS).
+    var fixedViewpoint: Viewpoint? { Viewpoint.with(id: settings.fixedViewpointID) }
 
     var isUsingDemoViewpoint: Bool { fixedViewpoint != nil }
 
@@ -339,15 +345,18 @@ final class AppModel {
 
     // MARK: - Horizon
 
-    var currentViewpoint: GeoCoordinate {
+    /// The fixed viewpoint, else the GPS position; nil until the first fix.
+    var currentViewpoint: GeoCoordinate? {
         if let v = fixedViewpoint { return v.coordinate }
-        guard let c = location.location?.coordinate else { return Viewpoint.gornergrat.coordinate }
+        guard let c = location.location?.coordinate else { return nil }
         return GeoCoordinate(latitude: c.latitude, longitude: c.longitude)
     }
 
     /// Recompute when the viewpoint moved noticeably or any input changed (see `HorizonStore.update`).
+    /// Nothing to compute before the first GPS fix (unless a fixed viewpoint is chosen).
     func recompute(force: Bool = false) async {
-        let request = HorizonStore.Request(viewpoint: currentViewpoint, accuracy: positionAccuracy,
+        guard let viewpoint = currentViewpoint else { return }
+        let request = HorizonStore.Request(viewpoint: viewpoint, accuracy: positionAccuracy,
                                            maxDistance: settings.maxDistanceKm * 1000, eyeHeight: settings.eyeHeight,
                                            packVersion: packs.version)
         await horizonStore.update(request, packs: packs.snapshot(), force: force)

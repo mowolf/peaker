@@ -90,8 +90,8 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       (Natural Earth states/provinces) or named mountain regions. The format already supports this.
 - [x] **K-7** *(done in the app at tile load: SummitBurnIn + labels snapped to the drawn summit)* Summit burn-in: raise the DEM around each peak to its official height (the DEM cuts sharp summits
       100–150 m too low, e.g. Matterhorn).
-- [x] **K-5** *(ios/Peaker/Resources/BundledPacks: DEMO = Zermatt 4 tiles / 6,180 peaks; NP = Nepal 41 tiles / 1,580 peaks,
-      built without OSM — rebuild with OSM for many more peaks)* Small **bundled demo pack** (e.g. one Alps tile set + peaks) so the app works on first launch and in tests.
+- [x] **K-5** ~~Bundled demo pack~~ *(removed in November 2026: it was for testing; the app ships without data and
+      countries are downloaded)*.
 
 ## Milestone 4 — iOS app skeleton
 
