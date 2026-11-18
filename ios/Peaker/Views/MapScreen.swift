@@ -87,7 +87,7 @@ struct MapScreen: View {
                 // Keep pinch and rotation of a simultaneous gesture.
                 moved.distance = model.map.camera.distance
                 moved.heading = model.map.camera.heading
-                model.map.camera = moved
+                model.map.camera = moved.clamped()
             }
             .onEnded { _ in
                 dragStart = nil

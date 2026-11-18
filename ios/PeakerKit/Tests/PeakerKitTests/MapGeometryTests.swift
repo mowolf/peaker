@@ -61,6 +61,10 @@ struct MapGeometryTests {
         // Far out, the view is steeper; close in, any tilt.
         #expect(MapCamera(target: .zero, distance: 300, pitch: 30).clamped().pitch == 80)
         #expect(MapCamera(target: .zero, distance: 10, pitch: 30).clamped().pitch == 30)
+        // Broken values are repaired.
+        let broken = MapCamera(target: SIMD3(.nan, 0, 1), distance: .infinity, heading: .nan, pitch: .nan).clamped()
+        #expect(broken.target == .zero && broken.distance == 16)
+        #expect(broken.heading == 0 && broken.pitch >= 25 && broken.project(SIMD3(0, 0, -1), width: 100, height: 100) != nil)
     }
 
     @Test func ridgesHidePeaksBehindThem() {

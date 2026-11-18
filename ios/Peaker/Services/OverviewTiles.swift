@@ -1,15 +1,18 @@
 import Foundation
 import PeakerKit
 
-/// ~1 km versions of the downloaded 90 m tiles (101 × 101 samples instead of 1201 × 1201), for the zoomed-out map.
+/// ~700 m versions of the downloaded 90 m tiles (151 × 151 samples instead of 1201 × 1201), for the zoomed-out map.
 ///
-/// Made once per tile from its 90 m file and kept in Caches (20 KB each; the system may clear them, they are
-/// remade), and in memory while the app runs. A whole country then loads in moments instead of decoding
-/// hundreds of megabytes.
+/// Made once per tile from its 90 m file and kept in Caches (45 KB each; the system may clear them, they are
+/// remade), and the most recently used ~900 in memory. A whole country then loads in moments instead of
+/// decoding hundreds of megabytes.
 actor OverviewTiles {
-    static let step = 12
+    static let step = 8
+    private static let memoryCapacity = 900
 
     private var memory: [TileID: ElevationTile] = [:]
+    private var lastUse: [TileID: Int] = [:]
+    private var clock = 0
     private let directory: URL
 
     init() {
@@ -24,7 +27,12 @@ actor OverviewTiles {
         var missing: [(TileID, URL)] = []
         for id in ids {
             guard let url = files[id] else { continue }
-            if let tile = memory[id] { out[id] = tile } else { missing.append((id, url)) }
+            if let tile = memory[id] {
+                out[id] = tile
+                touch(id)
+            } else {
+                missing.append((id, url))
+            }
         }
         let directory = directory
         let window = max(2, ProcessInfo.processInfo.activeProcessorCount)
@@ -37,6 +45,7 @@ actor OverviewTiles {
             while let (id, tile) = await group.next() {
                 if let tile {
                     memory[id] = tile
+                    touch(id)
                     out[id] = tile
                 }
                 if let (next, url) = pending.next() {
@@ -44,7 +53,23 @@ actor OverviewTiles {
                 }
             }
         }
+        evict()
         return out
+    }
+
+    private func touch(_ id: TileID) {
+        clock += 1
+        lastUse[id] = clock
+    }
+
+    /// Least recently used first, down to the capacity.
+    private func evict() {
+        guard memory.count > Self.memoryCapacity else { return }
+        let drop = memory.count - Self.memoryCapacity
+        for (id, _) in lastUse.sorted(by: { $0.value < $1.value }).prefix(drop) {
+            memory[id] = nil
+            lastUse[id] = nil
+        }
     }
 
     /// From the cache file if it matches the source file, else decoded from the 90 m tile and cached.
@@ -52,7 +77,7 @@ actor OverviewTiles {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         let modified = Int((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
-        let cacheURL = cache.appendingPathComponent("\(id.name)-\(size)-\(modified).ovr")
+        let cacheURL = cache.appendingPathComponent("\(id.name)-s\(step)-\(size)-\(modified).ovr")
         if let data = try? Data(contentsOf: cacheURL), let tile = decode(data, id: id) { return tile }
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let full = try? TileCodec.decode(data) else { return nil }

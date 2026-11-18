@@ -6,7 +6,7 @@ import RealityKit
 
 /// The 3D map's state: camera, the terrain layers and their RealityKit models, and what to highlight.
 ///
-/// Two layers in one scene frame: an overview sized to the zoom (160 km to 2,400 km, from ~1 km overview tiles,
+/// Two layers in one scene frame: an overview sized to the zoom (120 km to 1,800 km, from ~700 m overview tiles,
 /// with countries without data in black) and, closer than 70 km, a detailed 40 km square on top of it, which
 /// cuts a hole into the overview. Both are rebuilt around the view in the background when it moves or zooms
 /// far enough; nothing is swapped until the new layer is ready.
@@ -37,8 +37,9 @@ final class MapModel {
     @ObservationIgnored private let loader = TileLoader()
     @ObservationIgnored private let overviewTiles = OverviewTiles()
     @ObservationIgnored private var outlines: CountryOutlines?
-    @ObservationIgnored private var building: [MapTerrain.Level: MapTerrain.Request] = [:]
-    @ObservationIgnored private var queued: [MapTerrain.Level: MapTerrain.Request] = [:]
+    /// The latest request per level and its build.
+    @ObservationIgnored private var requested: [MapTerrain.Level: MapTerrain.Request] = [:]
+    @ObservationIgnored private var tasks: [MapTerrain.Level: Task<Void, Never>] = [:]
     @ObservationIgnored private var holeFor: (overview: UUID, detail: UUID?)?
     @ObservationIgnored private var packs: PackSnapshot?
 
@@ -83,9 +84,9 @@ final class MapModel {
             guard let layer else { return true }
             return layer.style != settings.mapStyle || layer.packVersion != packVersion || layer.frame != frame
         }
-        // Overview: about 7× the camera distance across, rebuilt when the view leaves its middle or the zoom
-        // changed a lot.
-        let wanted = Double(min(2400, max(160, camera.distance * 7))) * 1000
+        // Overview: about 4.5× the camera distance across (zoomed out the view looks down steeply, so that covers
+        // the screen), rebuilt when the view leaves its middle or the zoom changed a lot.
+        let wanted = Double(min(1800, max(120, camera.distance * 4.5))) * 1000
         if stale(overview) || overview!.offCentre(camera.target) > 0.25
             || !(0.55...1.8).contains(overview!.size / wanted) {
             build(.init(level: .overview, frame: frame, center: here, size: wanted, style: settings.mapStyle,
@@ -99,6 +100,10 @@ final class MapModel {
     }
 
     private func resetFrame(center: GeoCoordinate, exaggeration: Float) {
+        for task in tasks.values { task.cancel() }
+        tasks = [:]
+        requested = [:]
+        isBuilding = false
         frame = MapFrame(center: center, exaggeration: exaggeration)
         detail = nil
         overview = nil
@@ -117,30 +122,31 @@ final class MapModel {
 
     // MARK: - Building
 
+    /// Start building a layer. A newer request for the same level cancels the older build instead of waiting
+    /// behind it, and only the latest request's result is shown: an abandoned or slow build can never block
+    /// the map.
     private func build(_ request: MapTerrain.Request) {
-        if building[request.level] == request { return }
-        guard building[request.level] == nil else {
-            queued[request.level] = request  // the latest wins
-            return
-        }
+        let level = request.level
+        if requested[level] == request { return }  // already building (or built) exactly this
         guard let packs else { return }
-        building[request.level] = request
+        requested[level] = request
+        tasks[level]?.cancel()
         isBuilding = true
         let loader = loader, overviewTiles = overviewTiles
-        Task {
+        tasks[level] = Task {
             let outlines = await self.loadOutlines()
-            let terrain = await Task.detached(priority: request.level == .detail ? .userInitiated : .utility) {
+            let work = Task.detached(priority: level == .detail ? .userInitiated : .utility) {
                 await MapTerrain.build(request, packs: packs, loader: loader, overview: overviewTiles, outlines: outlines)
-            }.value
-            let entity = try? await Self.makeEntity(terrain, indices: terrain.mesh.indices)
-            if terrain.frame == self.frame {  // not outdated by a new frame meanwhile
-                self.install(terrain, entity: entity)
             }
-            self.building[request.level] = nil
-            if let next = self.queued.removeValue(forKey: request.level) {
-                self.build(next)
+            let terrain = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            var entity: ModelEntity?
+            if let terrain, !Task.isCancelled {
+                entity = try? await Self.makeEntity(terrain, indices: terrain.mesh.indices)
             }
-            self.isBuilding = !self.building.isEmpty
+            guard self.requested[level] == request else { return }  // superseded meanwhile
+            if let terrain, terrain.frame == self.frame { self.install(terrain, entity: entity) }
+            self.tasks[level] = nil
+            self.isBuilding = !self.tasks.isEmpty
         }
     }
 

@@ -108,7 +108,9 @@ private struct ViewerLifecycle: ViewModifier {
             // A new result moves the search target (new viewpoint) or drops it (no longer visible).
             .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
             // Pause camera and sensors in the background (battery), resume as they were.
-            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }
+            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active && !model.showMap) }
+            // The map covers the viewer: pause its camera and motion sensors meanwhile (CPU, battery).
+            .onChange(of: model.showMap) { _, shown in model.setActive(!shown) }
     }
 }
 

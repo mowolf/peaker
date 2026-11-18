@@ -6,7 +6,7 @@ import PeakerKit
 ///
 /// Two levels share one scene frame:
 /// - `detail`: 40 km around the view from the full-resolution tiles (30 m where downloaded);
-/// - `overview`: up to a few thousand km from ~1 km overview tiles, with the world around the downloaded data:
+/// - `overview`: up to ~1,800 km from ~700 m overview tiles, with the world around the downloaded data:
 ///   countries without data in black, sea, borders.
 struct MapTerrain: Sendable {
     enum Level: Sendable { case detail, overview }
@@ -41,7 +41,7 @@ struct MapTerrain: Sendable {
     static let detailSize = 40_000.0
 
     static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader, overview: OverviewTiles,
-                      outlines: CountryOutlines?) async -> MapTerrain {
+                      outlines: CountryOutlines?) async -> MapTerrain? {
         let center = request.center
         let ids = TileID.covering(center: center, radius: request.size * 0.75)
         let boxes = GeoBox.covering(ids, margin: TileLoader.summitMargin)
@@ -57,8 +57,10 @@ struct MapTerrain: Sendable {
         case .overview:
             peaks = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes, limit: 400)
             tiles = await overview.tiles(ids, files: packs.tileFiles)
-            meshSamples = 257
+            meshSamples = 513
         }
+        // Stop early when a newer request replaced this one (checked between the expensive steps).
+        if Task.isCancelled { return nil }
         let textureSamples = 2048
         // Where no tile is downloaded there is no height: the texture then shows the country (black) or the sea.
         let heightAt: (Double, Double) -> Float? = { lat, lon in
@@ -66,6 +68,7 @@ struct MapTerrain: Sendable {
         }
         let grid = HeightGrid.sample(center: center, size: request.size, samples: meshSamples, heightAt: heightAt)
         let textureGrid = HeightGrid.sample(center: center, size: request.size, samples: textureSamples, heightAt: heightAt)
+        if Task.isCancelled { return nil }
         let mask = outlines.map { countryMask($0, for: textureGrid) }
         let style = request.style.style
         let texture = mask.map { style.render(textureGrid, countries: $0, exaggeration: request.frame.exaggeration) }

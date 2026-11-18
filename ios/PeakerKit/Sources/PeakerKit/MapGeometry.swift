@@ -170,11 +170,18 @@ public struct MapCamera: Sendable, Equatable {
         return moved
     }
 
+    /// Keeps the camera usable: limits distance and tilt, and repairs values that are not finite numbers (a
+    /// single NaN would otherwise stay forever, since every gesture starts from the current camera).
     public func clamped() -> MapCamera {
         var c = self
-        c.distance = min(max(distance, Self.distanceRange.lowerBound), Self.distanceRange.upperBound)
-        c.pitch = min(max(pitch, Self.minimumPitch(distance: c.distance)), Self.pitchRange.upperBound)
-        c.heading = heading.truncatingRemainder(dividingBy: 360)
+        if !(c.target.x.isFinite && c.target.y.isFinite && c.target.z.isFinite) { c.target = .zero }
+        if !c.distance.isFinite { c.distance = 16 }
+        if !c.heading.isFinite { c.heading = 0 }
+        if !c.pitch.isFinite { c.pitch = 55 }
+        if !c.fieldOfView.isFinite || c.fieldOfView < 10 || c.fieldOfView > 120 { c.fieldOfView = 50 }
+        c.distance = min(max(c.distance, Self.distanceRange.lowerBound), Self.distanceRange.upperBound)
+        c.pitch = min(max(c.pitch, Self.minimumPitch(distance: c.distance)), Self.pitchRange.upperBound)
+        c.heading = c.heading.truncatingRemainder(dividingBy: 360)
         if c.heading < 0 { c.heading += 360 }
         return c
     }
