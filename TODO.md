@@ -270,8 +270,11 @@ tints, hill shading and contour lines; no roads or towns. Flat map = the same sc
 - [x] **M-5** Peak search that flies to the peak (highlighted).
 - [x] **M-6** Peak book on the map: filter "Peak book only", "Map" in peak details and as a swipe action in the
       peak book.
-- [ ] **M-7** Measure on a device: build time, memory, frame rate; then level of detail (finer mesh near the
-      camera, coarser far away) and a larger area if needed.
+- [x] **M-7** Zoom out to whole countries: an overview layer (160–2,400 km, from ~1 km overview tiles cached per
+      downloaded tile) under the detailed 40 km layer, which cuts a hole into it; country outlines (Natural Earth,
+      shipped with the app) with land of countries without data in black, sea and borders.
+- [ ] **M-7b** Globe: beyond ~2,000 km switch to a sphere with the whole world (downloaded countries in colour).
+- [ ] **M-7c** Measure on a device: build times, memory, frame rate.
 - [ ] **M-8** Map polish: two-finger tilt, smooth camera moves, a base/skirt under the area's edges, fog.
 
 ## Milestone 14 — Photos in entries

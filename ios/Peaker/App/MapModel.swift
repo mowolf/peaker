@@ -4,32 +4,43 @@ import Observation
 import PeakerKit
 import RealityKit
 
-/// The 3D map's state: camera, the area shown (terrain and its RealityKit model), and what to highlight.
+/// The 3D map's state: camera, the terrain layers and their RealityKit models, and what to highlight.
 ///
-/// An area is a 40 km square around a centre. When the view moves out of its middle, the next area is built
-/// around the new position in the background; the camera switches over together with the new model, so
-/// nothing jumps.
+/// Two layers in one scene frame: an overview sized to the zoom (160 km to 2,400 km, from ~1 km overview tiles,
+/// with countries without data in black) and, closer than 70 km, a detailed 40 km square on top of it, which
+/// cuts a hole into the overview. Both are rebuilt around the view in the background when it moves or zooms
+/// far enough; nothing is swapped until the new layer is ready.
 @MainActor
 @Observable
 final class MapModel {
     var camera = MapCamera(target: .zero, distance: 16, heading: 0, pitch: 55)
-    private(set) var terrain: MapTerrain?
-    /// The terrain's model, swapped by the scene when it changes.
-    private(set) var terrainEntity: ModelEntity?
+    private(set) var frame: MapFrame?
+    private(set) var detail: MapTerrain?
+    private(set) var overview: MapTerrain?
+    private(set) var detailEntity: ModelEntity?
+    private(set) var overviewEntity: ModelEntity?
     private(set) var isBuilding = false
     /// Peak to highlight (search result, "Show on map").
     var highlightedPeakID: String?
     var filter: MapFilter = .all
 
-    @ObservationIgnored private let loader = TileLoader()
-    @ObservationIgnored private var building: MapTerrain.Request?
-    @ObservationIgnored private var queued: (request: MapTerrain.Request, focus: Focus?)?
+    /// The detailed layer is shown (and kept up to date) closer than this (km).
+    static let detailDistance: Float = 70
+    /// Re-centre the frame when the view gets this far (km) from its centre.
+    private static let frameRadius: Float = 1200
 
-    /// Where to put the camera once an area is ready.
-    struct Focus {
-        var coordinate: GeoCoordinate
-        var distance: Float?
-    }
+    var showsDetail: Bool { camera.distance < Self.detailDistance && detail != nil }
+
+    /// Layers to label and test visibility against, detailed first.
+    var layers: [MapTerrain] { [showsDetail ? detail : nil, overview].compactMap { $0 } }
+
+    @ObservationIgnored private let loader = TileLoader()
+    @ObservationIgnored private let overviewTiles = OverviewTiles()
+    @ObservationIgnored private var outlines: CountryOutlines?
+    @ObservationIgnored private var building: [MapTerrain.Level: MapTerrain.Request] = [:]
+    @ObservationIgnored private var queued: [MapTerrain.Level: MapTerrain.Request] = [:]
+    @ObservationIgnored private var holeFor: (overview: UUID, detail: UUID?)?
+    @ObservationIgnored private var packs: PackSnapshot?
 
     enum MapFilter: String, CaseIterable, Identifiable {
         case all, peakBook
@@ -37,90 +48,160 @@ final class MapModel {
         var title: String { self == .all ? "All peaks" : "Peak book only" }
     }
 
-    // MARK: - Areas
+    // MARK: - Showing places
 
     /// Show the area around `coordinate` (opening the map, "Show on map", a search result).
     func focus(on coordinate: GeoCoordinate, distance: Float? = nil, settings: AppSettings, packs: PackSnapshot,
                packVersion: Int) {
-        let request = Self.request(center: coordinate, settings: settings, packVersion: packVersion)
-        if let terrain, terrain.matches(request), !terrain.needsRecentre(target: terrain.frame.point(coordinate, height: 0)) {
-            moveCamera(to: coordinate, distance: distance, in: terrain)  // already in this area
-            return
+        let exaggeration = Float(settings.mapExaggeration)
+        if frame == nil || frame?.exaggeration != exaggeration
+            || length(frame!.point(coordinate, height: 0)) > Self.frameRadius {
+            resetFrame(center: coordinate, exaggeration: exaggeration)
         }
-        build(request, focus: Focus(coordinate: coordinate, distance: distance), packs: packs)
-    }
-
-    /// After a gesture, a settings change or new packs: rebuild if the style changed or the view left the middle.
-    func refreshIfNeeded(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
-        guard let terrain else { return }
-        let target = terrain.frame.coordinate(x: camera.target.x, z: camera.target.z)
-        let request = Self.request(center: target, settings: settings, packVersion: packVersion)
-        guard !terrain.matches(request) || terrain.needsRecentre(target: camera.target) else { return }
-        build(request, focus: Focus(coordinate: target, distance: nil), packs: packs)
-    }
-
-    private static func request(center: GeoCoordinate, settings: AppSettings, packVersion: Int) -> MapTerrain.Request {
-        MapTerrain.Request(center: center, style: settings.mapStyle, exaggeration: Float(settings.mapExaggeration),
-                           packVersion: packVersion)
-    }
-
-    private func build(_ request: MapTerrain.Request, focus: Focus?, packs: PackSnapshot) {
-        // One build at a time; the latest request waits and replaces any older waiting one.
-        guard building == nil else {
-            queued = (request, focus)
-            return
-        }
-        building = request
-        isBuilding = true
-        let loader = loader
-        Task {
-            let terrain = await Task.detached(priority: .userInitiated) {
-                await MapTerrain.build(request, packs: packs, loader: loader)
-            }.value
-            let entity = try? await Self.makeEntity(terrain)
-            self.install(terrain, entity: entity, focus: focus)
-            self.building = nil
-            if let next = self.queued {
-                self.queued = nil
-                self.build(next.request, focus: next.focus, packs: packs)
-            } else {
-                self.isBuilding = false
-            }
-        }
-    }
-
-    /// Switch to a new area: the camera keeps looking at the same place (or the focus), in the new frame.
-    private func install(_ new: MapTerrain, entity: ModelEntity?, focus: Focus?) {
-        let lookingAt = terrain.map { $0.frame.coordinate(x: camera.target.x, z: camera.target.z) }
-        terrain = new
-        terrainEntity = entity
-        if let focus {
-            moveCamera(to: focus.coordinate, distance: focus.distance, in: new)
-        } else if let lookingAt {
-            moveCamera(to: lookingAt, distance: nil, in: new)
-        }
-    }
-
-    private func moveCamera(to coordinate: GeoCoordinate, distance: Float?, in terrain: MapTerrain) {
-        var p = terrain.frame.point(coordinate, height: 0)
-        p.y = terrain.groundHeight(x: p.x, z: p.z)
-        camera.target = p
+        guard let frame else { return }
+        var target = frame.point(coordinate, height: 0)
+        target.y = groundHeight(x: target.x, z: target.z) ?? camera.target.y
+        camera.target = target
         if let distance { camera.distance = distance }
         camera = camera.clamped()
+        update(settings: settings, packs: packs, packVersion: packVersion)
+    }
+
+    /// After a gesture or a change of settings or packs: rebuild the layers that no longer fit the view.
+    func update(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        self.packs = packs
+        guard var frame else { return }
+        let exaggeration = Float(settings.mapExaggeration)
+        let here = frame.coordinate(x: camera.target.x, z: camera.target.z)
+        if frame.exaggeration != exaggeration || length(SIMD3(camera.target.x, 0, camera.target.z)) > Self.frameRadius {
+            // New frame around the view: the target is its centre; its height follows when a layer is ready.
+            resetFrame(center: here, exaggeration: exaggeration)
+            frame = self.frame!
+            camera.target = SIMD3(0, 0, 0)
+        }
+        func stale(_ layer: MapTerrain?) -> Bool {
+            guard let layer else { return true }
+            return layer.style != settings.mapStyle || layer.packVersion != packVersion || layer.frame != frame
+        }
+        // Overview: about 7× the camera distance across, rebuilt when the view leaves its middle or the zoom
+        // changed a lot.
+        let wanted = Double(min(2400, max(160, camera.distance * 7))) * 1000
+        if stale(overview) || overview!.offCentre(camera.target) > 0.25
+            || !(0.55...1.8).contains(overview!.size / wanted) {
+            build(.init(level: .overview, frame: frame, center: here, size: wanted, style: settings.mapStyle,
+                        packVersion: packVersion))
+        }
+        if camera.distance < Self.detailDistance, stale(detail) || detail!.offCentre(camera.target) > 0.3 {
+            build(.init(level: .detail, frame: frame, center: here, size: MapTerrain.detailSize, style: settings.mapStyle,
+                        packVersion: packVersion))
+        }
+        updateHole()
+    }
+
+    private func resetFrame(center: GeoCoordinate, exaggeration: Float) {
+        frame = MapFrame(center: center, exaggeration: exaggeration)
+        detail = nil
+        overview = nil
+        detailEntity = nil
+        overviewEntity = nil
+        holeFor = nil
+    }
+
+    /// Ground height under a scene position from the finest layer that covers it.
+    func groundHeight(x: Float, z: Float) -> Float? {
+        for layer in [detail, overview].compactMap({ $0 }) {
+            if let h = layer.groundHeight(x: x, z: z) { return h }
+        }
+        return nil
+    }
+
+    // MARK: - Building
+
+    private func build(_ request: MapTerrain.Request) {
+        if building[request.level] == request { return }
+        guard building[request.level] == nil else {
+            queued[request.level] = request  // the latest wins
+            return
+        }
+        guard let packs else { return }
+        building[request.level] = request
+        isBuilding = true
+        let loader = loader, overviewTiles = overviewTiles
+        Task {
+            let outlines = await self.loadOutlines()
+            let terrain = await Task.detached(priority: request.level == .detail ? .userInitiated : .utility) {
+                await MapTerrain.build(request, packs: packs, loader: loader, overview: overviewTiles, outlines: outlines)
+            }.value
+            let entity = try? await Self.makeEntity(terrain, indices: terrain.mesh.indices)
+            if terrain.frame == self.frame {  // not outdated by a new frame meanwhile
+                self.install(terrain, entity: entity)
+            }
+            self.building[request.level] = nil
+            if let next = self.queued.removeValue(forKey: request.level) {
+                self.build(next)
+            }
+            self.isBuilding = !self.building.isEmpty
+        }
+    }
+
+    private func install(_ terrain: MapTerrain, entity: ModelEntity?) {
+        let hadGround = groundHeight(x: camera.target.x, z: camera.target.z) != nil
+        switch terrain.level {
+        case .detail:
+            detail = terrain
+            detailEntity = entity
+        case .overview:
+            overview = terrain
+            overviewEntity = entity
+            holeFor = nil
+        }
+        if !hadGround, let h = groundHeight(x: camera.target.x, z: camera.target.z) { camera.target.y = h }
+        updateHole()
+    }
+
+    /// The overview leaves out the cells under the shown detailed layer.
+    private func updateHole() {
+        guard let overview, let overviewEntity else { return }
+        let detailID = showsDetail ? detail?.id : nil
+        if let holeFor, holeFor.overview == overview.id, holeFor.detail == detailID { return }
+        holeFor = (overview.id, detailID)
+        let indices = (showsDetail ? detail : nil).map {
+            overview.mesh.indices(width: overview.grid.width, height: overview.grid.height, excluding: $0.sceneRect)
+        } ?? overview.mesh.indices
+        if let mesh = try? Self.makeMesh(overview.mesh, indices: indices) {
+            overviewEntity.model?.mesh = mesh
+        }
+    }
+
+    /// Called when the camera distance crosses the detail threshold, to cut or close the overview's hole.
+    func cameraDidChange() { updateHole() }
+
+    private func loadOutlines() async -> CountryOutlines? {
+        if let outlines { return outlines }
+        let loaded = await Task.detached(priority: .utility) { () -> CountryOutlines? in
+            guard let url = Bundle.main.url(forResource: "CountryOutlines", withExtension: "bin"),
+                  let data = try? Data(contentsOf: url) else { return nil }
+            return try? CountryOutlines(data: data)
+        }.value
+        outlines = loaded
+        return loaded
     }
 
     // MARK: - RealityKit
 
-    /// The terrain as a RealityKit model: the style texture already has light and shade, so it is unlit.
-    private static func makeEntity(_ terrain: MapTerrain) async throws -> ModelEntity {
+    private static func makeMesh(_ mesh: TerrainMesh, indices: [UInt32]) throws -> MeshResource {
         var descriptor = MeshDescriptor(name: "terrain")
-        descriptor.positions = MeshBuffers.Positions(terrain.mesh.positions)
-        descriptor.normals = MeshBuffers.Normals(terrain.mesh.normals)
+        descriptor.positions = MeshBuffers.Positions(mesh.positions)
+        descriptor.normals = MeshBuffers.Normals(mesh.normals)
         // RealityKit's texture coordinates start at the bottom; the texture's first row is the north edge.
-        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(terrain.mesh.uvs.map { SIMD2($0.x, 1 - $0.y) })
-        descriptor.primitives = .triangles(terrain.mesh.indices)
-        let mesh = try MeshResource.generate(from: [descriptor])
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(mesh.uvs.map { SIMD2($0.x, 1 - $0.y) })
+        descriptor.primitives = .triangles(indices)
+        return try MeshResource.generate(from: [descriptor])
+    }
 
+    /// The layer as a RealityKit model: the style texture already has light and shade, so it is unlit.
+    private static func makeEntity(_ terrain: MapTerrain, indices: [UInt32]) async throws -> ModelEntity {
+        let mesh = try makeMesh(terrain.mesh, indices: indices)
         let size = terrain.textureSize
         guard let provider = CGDataProvider(data: Data(terrain.texture) as CFData),
               let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
@@ -136,9 +217,4 @@ final class MapModel {
     }
 }
 
-extension MapTerrain {
-    /// Built for the same style, exaggeration and installed data as the request (the centre may differ).
-    func matches(_ request: Request) -> Bool {
-        style == request.style && frame.exaggeration == request.exaggeration && packVersion == request.packVersion
-    }
-}
+private func length(_ v: SIMD3<Float>) -> Float { (v * v).sum().squareRoot() }

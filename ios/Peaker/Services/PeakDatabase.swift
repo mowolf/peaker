@@ -8,12 +8,13 @@ enum PeakDatabase {
 
     /// Peaks inside any of the boxes from all databases, de-duplicated by stable ID. One connection per
     /// database for all boxes (`GeoBox.covering` splits areas that cross ±180° into two boxes).
-    static func peaks(in databases: [URL], boxes: [GeoBox]) -> [PeakInfo] {
+    /// - Parameter limit: only the most important peaks, at most this many per database and box (zoomed-out map).
+    static func peaks(in databases: [URL], boxes: [GeoBox], limit: Int? = nil) -> [PeakInfo] {
         guard !boxes.isEmpty else { return [] }
         let sql = """
             SELECT \(columns) FROM peaks_rtree r JOIN peaks p ON p.rowid = r.rowid
             WHERE r.min_lat <= ? AND r.max_lat >= ? AND r.min_lon <= ? AND r.max_lon >= ?
-            """
+            """ + (limit.map { " ORDER BY p.importance DESC LIMIT \($0)" } ?? "")
         var seen = Set<String>()
         var out: [PeakInfo] = []
         for url in databases {
