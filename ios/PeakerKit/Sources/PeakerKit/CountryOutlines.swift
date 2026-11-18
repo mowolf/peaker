@@ -63,6 +63,23 @@ public struct CountryOutlines: Sendable {
         lakes = countries.filter { $0.code == "~~" }
     }
 
+    /// The country a coordinate lies in (ISO code), by the even-odd rule over its rings; nil at sea.
+    public func country(at c: GeoCoordinate) -> String? {
+        let x = Float(c.longitude), y = Float(c.latitude)
+        for country in countries where x >= country.west && x <= country.east && y >= country.south && y <= country.north {
+            var inside = false
+            for ring in country.rings where ring.count >= 3 {
+                var a = ring[ring.count - 1]
+                for b in ring {
+                    if (a.y <= y) != (b.y <= y), x < a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x) { inside.toggle() }
+                    a = b
+                }
+            }
+            if inside { return country.code }
+        }
+        return nil
+    }
+
     /// Which country each pixel of a `width`×`height` image lies in: index into `countries` + 1, 0 for sea,
     /// `CountryOutlines.lake` for lakes.
     /// `pixel` maps a (longitude, latitude) to fractional pixel coordinates (x right, y down); the image covers

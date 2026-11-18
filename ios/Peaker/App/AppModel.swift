@@ -77,53 +77,107 @@ final class AppModel {
     var showSettings = false
     var showSearch = false
     var showPeakBook = false
-    var showMap = false
-    @ObservationIgnored private var pendingMapFocus: GeoCoordinate?
+    /// The app's two modes: the 3D map (start screen) and the peak finder (camera / panorama).
+    enum Screen { case map, finder }
+    var screen = Screen.map
 
-    /// Open the map at a place (a peak: highlighted). Closes sheets first: the map covers the whole screen.
+    /// Country of the start view whose data isn't downloaded yet (the map offers the download).
+    private(set) var missingCountry: Catalog.CountryEntry?
+    @ObservationIgnored private var startViewShown = false
+
+    /// Show a place on the map (a peak: highlighted). Closes sheets, switches to the map.
     func showOnMap(coordinate: GeoCoordinate, peakID: String?) {
         if let peakID { map.highlightedPeakID = peakID }
-        let distance: Float? = peakID == nil ? nil : 9
-        if showMap {
-            map.focus(on: coordinate, distance: distance, settings: settings, packs: packs.snapshot(),
-                      packVersion: packs.version)
-            return
-        }
-        pendingMapFocus = coordinate
-        let sheetOpen = selectedPeak != nil || showPeakBook || showSearch || showSettings || showDownloads
         selectedPeak = nil
         showPeakBook = false
         showSearch = false
         showSettings = false
         showDownloads = false
-        if sheetOpen {
-            Task {
-                try? await Task.sleep(for: .milliseconds(450))  // let the sheet go first
-                showMap = true
-            }
-        } else {
-            showMap = true
-        }
+        screen = .map
+        map.focus(on: coordinate, distance: peakID == nil ? nil : 9, settings: settings, packs: packs.snapshot(),
+                  packVersion: packs.version)
     }
 
-    /// Open the map around your position (or where it was last, before the first GPS fix).
+    /// The map around your position (or the start view, the first time).
     func openMap() {
-        if let here = currentViewpoint {
-            showOnMap(coordinate: here, peakID: nil)
-        } else {
-            showMap = true
+        screen = .map
+        if let here = currentViewpoint, startViewShown {
+            map.focus(on: here, settings: settings, packs: packs.snapshot(), packVersion: packs.version)
         }
     }
 
-    /// The map appeared: go to the requested place, or around the viewpoint the first time.
-    func openMapIfNeeded() {
-        if let target = pendingMapFocus ?? (map.regional == nil ? currentViewpoint : nil) {
-            pendingMapFocus = nil
-            map.focus(on: target, distance: map.highlightedPeakID == nil ? nil : 9, settings: settings,
-                      packs: packs.snapshot(), packVersion: packs.version)
-        } else {
-            map.update(settings: settings, packs: packs.snapshot(), packVersion: packs.version)
+    /// The start view: the country you are in. With its data downloaded, the camera circles your most recently
+    /// climbed peak there, or else the country's highest mountain; without, the map offers the download.
+    /// Waits up to ~10 s for a first position; without one, the globe.
+    func showStartView() async {
+        guard !startViewShown else { return }
+        startViewShown = true
+        var here = currentViewpoint
+        for _ in 0..<50 where here == nil {
+            try? await Task.sleep(for: .milliseconds(200))
+            here = currentViewpoint
         }
+        let snapshot = packs.snapshot()
+        guard let here else {
+            map.showGlobe(center: GeoCoordinate(latitude: 46, longitude: 8), altitude: 6000, settings: settings,
+                          packs: snapshot, packVersion: packs.version)
+            return
+        }
+        var code = await map.countryCode(at: here)
+        if code == nil { code = await countryLocator.countryCode(at: here) }
+        let entry = code.flatMap { c in packs.catalog?.countries.first { $0.code.caseInsensitiveCompare(c) == .orderedSame } }
+        guard let code, packs.isDownloaded(code.uppercased()) else {
+            missingCountry = entry
+            map.focus(on: here, distance: 300, settings: settings, packs: snapshot, packVersion: packs.version)
+            return
+        }
+        missingCountry = nil
+        if let peak = await startPeak(country: code.uppercased(), box: entry.flatMap(Self.box)) {
+            map.startCinematic(around: peak, settings: settings, packs: snapshot, packVersion: packs.version)
+        } else {
+            map.focus(on: here, settings: settings, packs: snapshot, packVersion: packs.version)
+        }
+    }
+
+    /// The last climbed peak in the country, else its highest mountain (inside its outline).
+    private func startPeak(country: String, box: GeoBox?) async -> PeakInfo? {
+        let databases = packs.snapshot().peakDatabases
+        let climbed = peakBook.entries.filter { $0.entry.status == .summited }  // newest first
+        for stored in climbed {
+            for (peak, resolved) in zip(stored.entry.peaks, stored.resolvedIDs) {
+                guard let coordinate = peak.coordinate, await map.countryCode(at: coordinate) == country else { continue }
+                if let id = resolved ?? peak.id, let info = PeakDatabase.peaks(ids: [id], in: databases)[id] { return info }
+                return PeakInfo(id: peak.id ?? "entry:\(stored.fileName)", name: peak.displayName,
+                                coordinate: coordinate, elevation: peak.elevation, importance: 1)
+            }
+        }
+        guard let box else { return nil }
+        let candidates = await Task.detached { PeakDatabase.highestPeaks(in: databases, box: box) }.value
+        for peak in candidates {
+            if await map.countryCode(at: peak.coordinate) == country { return peak }
+        }
+        return nil
+    }
+
+    private static func box(_ entry: Catalog.CountryEntry) -> GeoBox? {
+        guard entry.bbox.count == 4 else { return nil }
+        return GeoBox(south: entry.bbox[1], north: entry.bbox[3], west: entry.bbox[0], east: entry.bbox[2])
+    }
+
+    /// Packs were installed or removed: recompute the view, re-match the peak book, and show the start view's
+    /// country once it is downloaded.
+    func packsChanged() {
+        Task { await recompute() }
+        Task { await peakBook.setDatabases(packs.snapshot().peakDatabases) }
+        countryDataChanged()
+    }
+
+    /// The missing country was downloaded: show the start view again with its data.
+    func countryDataChanged() {
+        guard let missing = missingCountry, packs.isDownloaded(missing.code) else { return }
+        missingCountry = nil
+        startViewShown = false
+        Task { await showStartView() }
     }
 
     /// The peak picked in search: highlighted in the view, with a marker at the screen edge while it is off screen.
@@ -236,7 +290,8 @@ final class AppModel {
             self.setFieldOfView(self.fieldOfView)
         }
         camera.prepare()
-        setFollowing(true)  // start with automatic direction when the device has the sensors
+        setFollowing(true)  // the peak finder starts with automatic direction when the device has the sensors
+        setActive(screen == .finder)  // sensors run only in the peak finder (the app starts on the map)
         // Catalog and first view at the same time (the catalog only needs the network).
         async let catalog: Void = packs.refreshCatalog()
         async let book: Void = peakBook.setDatabases(packs.snapshot().peakDatabases)

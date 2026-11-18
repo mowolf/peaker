@@ -1,7 +1,24 @@
 import PeakerKit
 import SwiftUI
 
-/// The main screen: full-screen panorama (camera or rendered), with floating Liquid Glass controls.
+/// The app's root: the 3D map (start screen) or the peak finder, with the sheets both use and the lifecycle
+/// (sensors run only in the peak finder).
+struct RootView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Group {
+            switch model.screen {
+            case .map: MapScreen()
+            case .finder: ViewerView()
+            }
+        }
+        .modifier(ViewerSheets())
+        .modifier(ViewerLifecycle())
+    }
+}
+
+/// The peak finder: full-screen panorama (camera or rendered), with floating Liquid Glass controls.
 struct ViewerView: View {
     @Environment(AppModel.self) private var model
 
@@ -25,8 +42,6 @@ struct ViewerView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .modifier(ViewerSheets())
-        .modifier(ViewerLifecycle())
     }
 
     /// The camera preview stays in the view hierarchy once access is granted (so it isn't rebuilt on every
@@ -63,9 +78,6 @@ private struct ViewerSheets: ViewModifier {
             .sheet(isPresented: $model.showSettings) {
                 SettingsView()
             }
-            .fullScreenCover(isPresented: $model.showMap) {
-                MapScreen()
-            }
             .sheet(isPresented: $model.showPeakBook) {
                 PeakBookView()
             }
@@ -79,7 +91,6 @@ private struct ViewerSheets: ViewModifier {
 /// Orientation, sun refresh, recomputing on setting and pack changes, pausing in the background.
 private struct ViewerLifecycle: ViewModifier {
     @Environment(AppModel.self) private var model
-    @Environment(\.scenePhase) private var scenePhase
 
     func body(content: Content) -> some View {
         content
@@ -101,16 +112,24 @@ private struct ViewerLifecycle: ViewModifier {
                 await model.recompute()
             }
             .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-            .onChange(of: model.packs.version) {
-                Task { await model.recompute() }
-                Task { await model.peakBook.setDatabases(model.packs.snapshot().peakDatabases) }
-            }
+            .onChange(of: model.packs.version) { model.packsChanged() }
             // A new result moves the search target (new viewpoint) or drops it (no longer visible).
             .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
-            // Pause camera and sensors in the background (battery), resume as they were.
-            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active && !model.showMap) }
-            // The map covers the viewer: pause its camera and motion sensors meanwhile (CPU, battery).
-            .onChange(of: model.showMap) { _, shown in model.setActive(!shown) }
+            .modifier(SensorLifecycle())
+    }
+}
+
+/// Camera and motion sensors only run in the peak finder, and not in the background (battery). (Separate from
+/// `ViewerLifecycle`: one long modifier chain took the type checker over 10 s.)
+private struct SensorLifecycle: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active && model.screen == .finder) }
+            .onChange(of: model.screen) { _, screen in model.setActive(screen == .finder) }
+            .onAppear { model.setActive(model.screen == .finder) }
     }
 }
 
@@ -133,24 +152,20 @@ private struct TopBar: View {
     var body: some View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
-                CompassRibbon()
-                    .frame(maxWidth: 520)
-                    .frame(height: 44)
-                    .glassEffect(.regular, in: .capsule)
-                    .glassEffectID("compass", in: glass)
+                HStack(spacing: 10) {
+                    // Settings top left, as on the map.
+                    GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                        Image(systemName: "gearshape").font(.title3)
+                    }
+                    CompassRibbon()
+                        .frame(maxWidth: 520)
+                        .frame(height: 44)
+                        .glassEffect(.regular, in: .capsule)
+                        .glassEffectID("compass", in: glass)
+                }
                 HStack(spacing: 8) {
                     ViewpointChip()
                         .glassEffectID("viewpoint", in: glass)
-                    Button { model.openMap() } label: {
-                        Image(systemName: "map")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
-                            .glassEffect(.regular, in: .circle)
-                    }
-                    .buttonStyle(PressScaleStyle())
-                    .accessibilityLabel("Map")
-                    .glassEffectID("map", in: glass)
                     if model.horizonStore.isComputing {
                         ProgressView()
                             .controlSize(.small)
@@ -397,45 +412,53 @@ private struct SearchTargetChip: View {
 
 // MARK: - Bottom controls
 
-/// Gyro (automatic direction) and camera toggles on the left; peak book, peak search and settings on the right.
+/// The peak finder's bottom bar, laid out like the map's (`ModeBar`): peak book on the left, search on the right,
+/// and in the middle the phone-following (immersive) toggle, the switch back to the map, and the camera.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        GlassEffectContainer(spacing: 16) {
-            controls
-        }
-    }
-
-    private var controls: some View {
-        HStack(spacing: 12) {
+        ModeBar(onPeakBook: { model.showPeakBook = true }, onSearch: { model.showSearch = true }) {
             ToggleButton(title: model.isFollowingDevice ? "Stop following the phone" : "Follow the phone",
                          icon: "gyroscope", isOn: model.isFollowingDevice) {
                 model.setFollowing(!model.isFollowingDevice)
             }
             .disabled(!model.motion.isAvailable)
 
+            GlassCircleButton(title: "Map", glass: .regular.tint(.blue), action: { model.openMap() }) {
+                Image(systemName: "map.fill").font(.title3).foregroundStyle(.white)
+            }
+
             ToggleButton(title: model.showsCamera ? "Hide camera" : "Show camera",
                          icon: model.showsCamera ? "camera.fill" : "camera", isOn: model.showsCamera) {
                 model.setCamera(!model.showsCamera)
             }
-
-            Spacer(minLength: 0)
-
-            GlassCircleButton(title: "Peak book", action: { model.showPeakBook = true }) {
-                Image(systemName: "book").font(.title3)
-            }
-
-            GlassCircleButton(title: "Find a peak", action: { model.showSearch = true }) {
-                Image(systemName: "magnifyingglass").font(.title3)
-            }
-
-            GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
-                Image(systemName: "gearshape").font(.title3)
-            }
         }
         .animation(.smooth, value: model.isFollowingDevice)
         .animation(.smooth, value: model.showsCamera)
+    }
+}
+
+/// The bottom bar of both modes: peak book left, `center` in the middle, search right.
+struct ModeBar<Center: View>: View {
+    let onPeakBook: () -> Void
+    let onSearch: () -> Void
+    @ViewBuilder let center: () -> Center
+
+    var body: some View {
+        GlassEffectContainer(spacing: 16) {
+            HStack(spacing: 12) {
+                GlassCircleButton(title: "Peak book", action: onPeakBook) {
+                    Image(systemName: "book").font(.title3)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 12) { center() }
+                Spacer(minLength: 0)
+                GlassCircleButton(title: "Find a peak", action: onSearch) {
+                    Image(systemName: "magnifyingglass").font(.title3)
+                }
+            }
+        }
     }
 }
 

@@ -25,6 +25,11 @@ struct CountryOutlinesTests {
         #expect(country(7.75, 46.02) == "CH")
         #expect(country(9.19, 45.46) == "IT")
         #expect(country(6.0, 39.0) == nil)
+        #expect(outlines.country(at: GeoCoordinate(latitude: 46.02, longitude: 7.75)) == "CH")  // Zermatt
+        #expect(outlines.country(at: GeoCoordinate(latitude: 27.99, longitude: 86.83)) == "NP")  // Kala Patthar
+        #expect(outlines.country(at: GeoCoordinate(latitude: 41.9, longitude: 12.45)) == "IT" ||
+                outlines.country(at: GeoCoordinate(latitude: 41.9, longitude: 12.45)) == "VA")  // Rome
+        #expect(outlines.country(at: GeoCoordinate(latitude: 39, longitude: 6)) == nil)  // sea
         // Lake Geneva and Lake Constance are lakes; Zurich's lake too.
         #expect(!outlines.lakes.isEmpty)
         func value(_ lon: Double, _ lat: Double) -> UInt16 { mask[Int((48 - lat) * 100) * 700 + Int((lon - 5) * 100)] }
