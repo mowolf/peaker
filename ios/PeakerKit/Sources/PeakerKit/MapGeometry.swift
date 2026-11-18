@@ -1,7 +1,7 @@
 import Foundation
 
-/// Map scene units: 1 unit = 1 km. x east, y up, z south (row 0 of a grid, the north edge, has the smallest z),
-/// centred on the grid's centre. Heights are multiplied by the exaggeration.
+/// Map scene units: 1 unit = 1 km. x east, y up, z south, around the frame's centre. Heights are multiplied by
+/// the exaggeration. All map layers, peaks and markers are placed through one frame, so they line up.
 public struct MapFrame: Sendable, Equatable {
     public var center: GeoCoordinate
     public var exaggeration: Float
@@ -36,43 +36,65 @@ public struct TerrainMesh: Sendable {
     public var indices: [UInt32]
 
     /// - Parameters:
-    ///   - frame: the scene's frame; the grid may be centred elsewhere in it (map layers share one frame).
+    ///   - frame: the scene's frame; the grid may be centred elsewhere in it (map layers share one frame). Every
+    ///     vertex goes through `frame.point`, like peaks and markers, so all layers line up.
     ///   - lowered: scene units to move the whole mesh down (a coarse layer under a detailed one).
     public init(grid: HeightGrid, frame: MapFrame, lowered: Float = 0) {
         let w = grid.width, h = grid.height
-        let cellKm = Float(grid.cellSize / 1000)
-        let origin = frame.point(grid.center, height: 0)
-        let halfW = Float(w - 1) / 2 - origin.x / cellKm, halfH = Float(h - 1) / 2 - origin.z / cellKm
-        let ex = frame.exaggeration
-        func height(_ r: Int, _ c: Int) -> Float {
-            let v = grid[r, c]
-            return (v.isNaN ? 0 : v / 1000 * ex) - lowered
-        }
         positions = []
-        normals = []
         uvs = []
         positions.reserveCapacity(w * h)
-        normals.reserveCapacity(w * h)
         uvs.reserveCapacity(w * h)
         for r in 0..<h {
             for c in 0..<w {
-                positions.append(SIMD3((Float(c) - halfW) * cellKm, height(r, c), (Float(r) - halfH) * cellKm))
-                // Central differences: slope east (x) and south (z).
-                let dx = (height(r, c + 1) - height(r, c - 1)) / (2 * cellKm)
-                let dz = (height(r + 1, c) - height(r - 1, c)) / (2 * cellKm)
-                let n = SIMD3<Float>(-dx, 1, -dz)
-                normals.append(n / (n * n).sum().squareRoot())
+                let v = grid[r, c]
+                var p = frame.point(grid.coordinate(row: Double(r), col: Double(c)), height: v.isNaN ? 0 : Double(v))
+                p.y -= lowered
+                positions.append(p)
                 uvs.append(SIMD2(Float(c) / Float(w - 1), Float(r) / Float(h - 1)))
             }
         }
-        indices = []
-        indices.reserveCapacity((w - 1) * (h - 1) * 6)
+        // Normals from the neighbouring vertices (central differences, one-sided at the edges).
+        normals = []
+        normals.reserveCapacity(w * h)
+        for r in 0..<h {
+            for c in 0..<w {
+                let east = positions[r * w + min(c + 1, w - 1)] - positions[r * w + max(c - 1, 0)]
+                let south = positions[min(r + 1, h - 1) * w + c] - positions[max(r - 1, 0) * w + c]
+                var n = SIMD3(south.y * east.z - south.z * east.y, south.z * east.x - south.x * east.z,
+                              south.x * east.y - south.y * east.x)
+                let length = (n * n).sum().squareRoot()
+                n = length > 0 ? n / length : SIMD3(0, 1, 0)
+                normals.append(n.y < 0 ? -n : n)
+            }
+        }
+        indices = Self.indices(width: w, height: h)
+    }
+
+    /// Two upward-facing triangles per grid cell; cells for which `skip` (row, col of the cell's north-west
+    /// corner) is true are left out.
+    public static func indices(width w: Int, height h: Int, skip: ((Int, Int) -> Bool)? = nil) -> [UInt32] {
+        var out: [UInt32] = []
+        out.reserveCapacity((w - 1) * (h - 1) * 6)
         for r in 0..<(h - 1) {
             for c in 0..<(w - 1) {
+                if let skip, skip(r, c) { continue }
                 let i = UInt32(r * w + c), right = i + 1, below = i + UInt32(w), diagonal = below + 1
                 // Counter-clockwise seen from above (+y), so the faces point up.
-                indices += [i, below, right, right, below, diagonal]
+                out += [i, below, right, right, below, diagonal]
             }
+        }
+        return out
+    }
+
+    /// Indices without the cells lying entirely inside a scene rectangle (x, z): the hole a detailed layer fills.
+    public func indices(width: Int, height: Int, excluding rect: (minX: Float, minZ: Float, maxX: Float, maxZ: Float)) -> [UInt32] {
+        Self.indices(width: width, height: height) { r, c in
+            for (dr, dc) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                let p = positions[(r + dr) * width + c + dc]
+                if p.x < rect.minX || p.x > rect.maxX || p.z < rect.minZ || p.z > rect.maxZ { return false }
+            }
+            return true
         }
     }
 }
@@ -89,7 +111,13 @@ public struct MapCamera: Sendable, Equatable {
     public var fieldOfView: Float
 
     public static let pitchRange: ClosedRange<Float> = 25...90
-    public static let distanceRange: ClosedRange<Float> = 1.5...120
+    public static let distanceRange: ClosedRange<Float> = 1.5...400
+
+    /// Flattest allowed view at a distance: zoomed far out the view looks down more, so it shows the country
+    /// rather than the horizon beyond the loaded area.
+    public static func minimumPitch(distance: Float) -> Float {
+        min(80, pitchRange.lowerBound + max(0, distance - 40) / 4)
+    }
 
     public init(target: SIMD3<Float>, distance: Float, heading: Float = 0, pitch: Float = 50, fieldOfView: Float = 50) {
         self.target = target; self.distance = distance; self.heading = heading; self.pitch = pitch
@@ -144,8 +172,8 @@ public struct MapCamera: Sendable, Equatable {
 
     public func clamped() -> MapCamera {
         var c = self
-        c.pitch = min(max(pitch, Self.pitchRange.lowerBound), Self.pitchRange.upperBound)
         c.distance = min(max(distance, Self.distanceRange.lowerBound), Self.distanceRange.upperBound)
+        c.pitch = min(max(pitch, Self.minimumPitch(distance: c.distance)), Self.pitchRange.upperBound)
         c.heading = heading.truncatingRemainder(dividingBy: 360)
         if c.heading < 0 { c.heading += 360 }
         return c
@@ -159,26 +187,34 @@ private func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
 private func dot(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float { (a * b).sum() }
 
 public extension HeightGrid {
-    /// Scene height (km, exaggerated) at a scene position (x, z), interpolated; nil outside the grid.
-    func sceneHeight(x: Float, z: Float, exaggeration: Float) -> Float? {
-        let cellKm = Float(cellSize / 1000)
-        let col = x / cellKm + Float(width - 1) / 2, row = z / cellKm + Float(height - 1) / 2
-        guard col >= 0, row >= 0, col <= Float(width - 1), row <= Float(height - 1) else { return nil }
-        let c = Int(col), r = Int(row), fc = col - Float(c), fr = row - Float(r)
-        let v = self[r, c] * (1 - fr) * (1 - fc) + self[r, c + 1] * (1 - fr) * fc
-            + self[r + 1, c] * fr * (1 - fc) + self[r + 1, c + 1] * fr * fc
-        return v.isNaN ? 0 : v / 1000 * exaggeration
+    /// Coordinate of a (fractional) sample position: the inverse of `position(of:)`, as `sample` lays it out.
+    func coordinate(row: Double, col: Double) -> GeoCoordinate {
+        let half = Double(width - 1) * cellSize / 2
+        let north = half - row * cellSize, east = col * cellSize - half
+        return GeoCoordinate(latitude: center.latitude + north / 111_320,
+                             longitude: center.longitude + east / (111_320 * cos(center.latitude * .pi / 180)))
     }
 
-    /// True if nothing on the terrain blocks the straight line from `eye` to `point` (scene units). Points a
+    /// Scene height (km, exaggerated) at a scene position (x, z), interpolated; nil outside the grid.
+    func sceneHeight(x: Float, z: Float, frame: MapFrame) -> Float? {
+        let p = position(of: frame.coordinate(x: x, z: z))
+        guard p.col >= 0, p.row >= 0, p.col <= Double(width - 1), p.row <= Double(height - 1) else { return nil }
+        let c = min(Int(p.col), width - 2), r = min(Int(p.row), height - 2)
+        let fc = Float(p.col - Double(c)), fr = Float(p.row - Double(r))
+        let v = self[r, c] * (1 - fr) * (1 - fc) + self[r, c + 1] * (1 - fr) * fc
+            + self[r + 1, c] * fr * (1 - fc) + self[r + 1, c + 1] * fr * fc
+        return v.isNaN ? 0 : v / 1000 * frame.exaggeration
+    }
+
+    /// True if nothing on the terrain blocks the straight line from `eye` to `point` (scene units). Aims a
     /// little above the summit (`clearance`) so the peak's own slope doesn't hide it.
-    func isVisible(_ point: SIMD3<Float>, from eye: SIMD3<Float>, exaggeration: Float,
+    func isVisible(_ point: SIMD3<Float>, from eye: SIMD3<Float>, frame: MapFrame,
                    clearance: Float = 0.03, steps: Int = 96) -> Bool {
         let target = point + SIMD3(0, clearance, 0)
         for i in 1..<steps {
             let t = Float(i) / Float(steps)
             let p = eye + (target - eye) * t
-            if let ground = sceneHeight(x: p.x, z: p.z, exaggeration: exaggeration), ground > p.y { return false }
+            if let ground = sceneHeight(x: p.x, z: p.z, frame: frame), ground > p.y { return false }
         }
         return true
     }

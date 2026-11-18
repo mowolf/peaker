@@ -21,7 +21,8 @@ struct MapScreen: View {
             let size = geo.size
             let labels = layoutLabels(size: size)
             ZStack {
-                MapSceneView(camera: map.camera, entity: map.terrainEntity, background: backgroundColor)
+                MapSceneView(camera: map.camera, entities: [map.overviewEntity, map.showsDetail ? map.detailEntity : nil],
+                             background: backgroundColor)
                     .allowsHitTesting(false)
                 Canvas(rendersAsynchronously: false) { context, _ in
                     drawPosition(&context, size: size)
@@ -58,13 +59,14 @@ struct MapScreen: View {
         .preferredColorScheme(model.settings.mapStyle == .dusk ? .dark : .light)
     }
 
+    /// The style's sea colour, so whatever lies beyond the loaded area reads as open water.
     private var backgroundColor: UIColor {
-        model.settings.mapStyle == .dusk ? UIColor(red: 0.02, green: 0.03, blue: 0.08, alpha: 1)
-            : UIColor(red: 0.80, green: 0.87, blue: 0.95, alpha: 1)
+        let w = model.settings.mapStyle.style.water
+        return UIColor(red: CGFloat(w.r), green: CGFloat(w.g), blue: CGFloat(w.b), alpha: 1)
     }
 
     private func refresh() {
-        model.map.refreshIfNeeded(settings: model.settings, packs: model.packs.snapshot(), packVersion: model.packs.version)
+        model.map.update(settings: model.settings, packs: model.packs.snapshot(), packVersion: model.packs.version)
     }
 
     private func select(_ peak: PeakInfo) {
@@ -101,8 +103,12 @@ struct MapScreen: View {
                 var camera = model.map.camera
                 camera.distance = start.distance / Float(max(0.1, value.magnification))
                 model.map.camera = camera.clamped()
+                model.map.cameraDidChange()
             }
-            .onEnded { _ in pinchStart = nil }
+            .onEnded { _ in
+                pinchStart = nil
+                refresh()
+            }
     }
 
     private var rotateGesture: some Gesture {
@@ -131,8 +137,9 @@ struct MapScreen: View {
 
     private func layoutLabels(size: CGSize) -> [MapLabel] {
         let map = model.map
-        guard let terrain = map.terrain else { return [] }
-        let entries = labelMemory.entries(for: terrain, settings: model.settings)
+        let layers = map.layers
+        guard !layers.isEmpty else { return [] }
+        let entries = labelMemory.entries(for: layers, settings: model.settings)
         let camera = map.camera
         let eye = camera.eye
         let w = Float(size.width), h = Float(size.height)
@@ -153,7 +160,8 @@ struct MapScreen: View {
                 if visibilityChecks >= 220 { continue }
                 visibilityChecks += 1
             }
-            guard terrain.grid.isVisible(e.point, from: eye, exaggeration: terrain.frame.exaggeration) else { continue }
+            let layer = layers[e.layer]
+            guard layer.grid.isVisible(e.point, from: eye, frame: layer.frame) else { continue }
             let priority = e.peak.importance + (mark == nil ? 0 : 0.5) + (isHighlighted ? 100 : 0)
             candidates.append(.init(id: e.peak.id, x: Double(s.x), y: Double(s.y),
                                     width: e.width + (mark == nil ? 0 : PanoramaView.LabelMemory.markWidth),
@@ -198,9 +206,9 @@ struct MapScreen: View {
 
     /// Your position (GPS or the fixed viewpoint): a blue dot.
     private func drawPosition(_ context: inout GraphicsContext, size: CGSize) {
-        guard let terrain = model.map.terrain, let here = model.currentViewpoint else { return }
-        var p = terrain.frame.point(here, height: 0)
-        p.y = terrain.groundHeight(x: p.x, z: p.z)
+        guard let frame = model.map.frame, let here = model.currentViewpoint else { return }
+        var p = frame.point(here, height: 0)
+        p.y = model.map.groundHeight(x: p.x, z: p.z) ?? 0
         guard let s = model.map.camera.project(p, width: Float(size.width), height: Float(size.height)) else { return }
         let center = CGPoint(x: CGFloat(s.x), y: CGFloat(s.y))
         context.fill(Path(ellipseIn: CGRect(x: center.x - 10, y: center.y - 10, width: 20, height: 20)),
@@ -210,8 +218,8 @@ struct MapScreen: View {
     }
 }
 
-/// Label data per area (names, widths, summit points), built once per terrain, units or language; and the
-/// rows of the last frame so labels stay put while the map moves.
+/// Label data per set of layers (names, widths, summit points), built once per layer change, units or
+/// language; and the rows of the last frame so labels stay put while the map moves.
 @MainActor
 final class MapLabelMemory {
     struct Entry {
@@ -220,22 +228,31 @@ final class MapLabelMemory {
         var name: String
         var detail: String
         var width: Double
+        /// Index of the layer to test visibility against.
+        var layer: Int
     }
 
     var rows: [String: Int] = [:]
-    private var key: (UUID, UnitSystem, String?)?
+    private var key: ([UUID], UnitSystem, String?)?
     private var cached: [Entry] = []
 
-    func entries(for terrain: MapTerrain, settings: AppSettings) -> [Entry] {
+    func entries(for layers: [MapTerrain], settings: AppSettings) -> [Entry] {
         let language = settings.peakLanguage
-        if let key, key.0 == terrain.id, key.1 == settings.units, key.2 == language { return cached }
-        cached = terrain.peaks.prefix(3000).map { peak in
-            let name = peak.displayName(language: language)
-            let detail = peak.elevation.map { settings.elevation($0) } ?? ""
-            return Entry(peak: peak, point: terrain.point(of: peak), name: name, detail: detail,
-                         width: PanoramaView.LabelMemory.textWidth(name: name, detail: detail) + 10)
+        let ids = layers.map(\.id)
+        if let key, key.0 == ids, key.1 == settings.units, key.2 == language { return cached }
+        var seen = Set<String>()
+        var entries: [Entry] = []
+        for (index, layer) in layers.enumerated() {
+            for peak in layer.peaks.prefix(3000) where seen.insert(peak.id).inserted {
+                let name = peak.displayName(language: language)
+                let detail = peak.elevation.map { settings.elevation($0) } ?? ""
+                entries.append(Entry(peak: peak, point: layer.point(of: peak), name: name, detail: detail,
+                                     width: PanoramaView.LabelMemory.textWidth(name: name, detail: detail) + 10,
+                                     layer: index))
+            }
         }
-        key = (terrain.id, settings.units, language)
+        cached = entries.sorted { $0.peak.importance > $1.peak.importance }
+        key = (ids, settings.units, language)
         return cached
     }
 }
@@ -243,14 +260,15 @@ final class MapLabelMemory {
 /// RealityKit scene without the camera image: the terrain model and a camera that follows `MapCamera`.
 struct MapSceneView: UIViewRepresentable {
     let camera: MapCamera
-    let entity: ModelEntity?
+    /// Terrain layers to show (nil entries are skipped).
+    let entities: [ModelEntity?]
     let background: UIColor
 
     @MainActor
     final class Coordinator {
         let anchor = AnchorEntity(world: .zero)
         let cameraEntity = PerspectiveCamera()
-        var shown: ModelEntity?
+        var shown: [ModelEntity] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -262,7 +280,7 @@ struct MapSceneView: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         let c = context.coordinator
         c.cameraEntity.camera.near = 0.05
-        c.cameraEntity.camera.far = 600
+        c.cameraEntity.camera.far = 8000
         c.anchor.addChild(c.cameraEntity)
         view.scene.addAnchor(c.anchor)
         return view
@@ -271,10 +289,11 @@ struct MapSceneView: UIViewRepresentable {
     func updateUIView(_ view: ARView, context: Context) {
         let c = context.coordinator
         view.environment.background = .color(background)
-        if c.shown !== entity {
-            c.shown?.removeFromParent()
-            if let entity { c.anchor.addChild(entity) }
-            c.shown = entity
+        let wanted = entities.compactMap { $0 }
+        if wanted.map(ObjectIdentifier.init) != c.shown.map(ObjectIdentifier.init) {
+            for entity in c.shown where !wanted.contains(where: { $0 === entity }) { entity.removeFromParent() }
+            for entity in wanted where entity.parent == nil { c.anchor.addChild(entity) }
+            c.shown = wanted
         }
         c.cameraEntity.camera.fieldOfViewInDegrees = camera.fieldOfView
         c.cameraEntity.look(at: camera.target, from: camera.eye, upVector: camera.up, relativeTo: nil)
@@ -299,13 +318,13 @@ private struct MapTopControls: View {
                 ProgressView()
                     .padding(12)
                     .glassEffect(.regular, in: .circle)
-            } else if map.terrain == nil {
+            } else if map.overview == nil {
                 Text("Waiting for your position…")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .glassEffect(.regular, in: .capsule)
-            } else if map.terrain?.hasData == false {
+            } else if map.overview?.hasData == false {
                 Text("No offline data here")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)

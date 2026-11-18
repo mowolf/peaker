@@ -83,7 +83,7 @@ public struct MapStyle: Sendable {
     public static let dusk = MapStyle(
         tints: [Stop(0, 0.03, 0.08, 0.22), Stop(1000, 0.05, 0.16, 0.42), Stop(2200, 0.10, 0.30, 0.65),
                 Stop(3200, 0.32, 0.55, 0.88), Stop(4500, 0.85, 0.92, 1.00)],
-        water: (0.01, 0.03, 0.10), noData: (0.02, 0.03, 0.06), shading: 0.9,
+        water: (0.03, 0.08, 0.24), noData: (0.02, 0.03, 0.06), shading: 0.9,
         contourInterval: 100, indexContourEvery: 5, contourColor: (0.85, 0.92, 1.0), contourOpacity: 0.22,
         unknownLand: (0.0, 0.0, 0.0))
 

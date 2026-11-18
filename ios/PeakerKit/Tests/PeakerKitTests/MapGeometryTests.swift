@@ -20,11 +20,11 @@ struct MapGeometryTests {
                               heights: [0, 0, 0, 0, 1000, 0, 0, 0, .nan])
         let mesh = TerrainMesh(grid: grid, frame: MapFrame(center: center, exaggeration: 1))
         #expect(mesh.positions.count == 9 && mesh.indices.count == 24)
-        #expect(mesh.positions[0] == SIMD3(-1, 0, -1))  // north-west corner
-        #expect(mesh.positions[4] == SIMD3(0, 1, 0))
+        #expect(near(mesh.positions[0], SIMD3(-1, 0, -1)))  // north-west corner
+        #expect(near(mesh.positions[4], SIMD3(0, 1, 0)))
         #expect(mesh.positions[8].y == 0)  // no data: flat
         #expect(mesh.uvs[8] == SIMD2(1, 1))
-        #expect(mesh.normals[4] == SIMD3(0, 1, 0))  // top of the bump
+        #expect(near(mesh.normals[4], SIMD3(0, 1, 0)))  // top of the bump
         #expect(mesh.normals[3].x < 0)  // west of the bump: the slope faces west
         for t in stride(from: 0, to: mesh.indices.count, by: 3) {
             let a = mesh.positions[Int(mesh.indices[t])], b = mesh.positions[Int(mesh.indices[t + 1])],
@@ -58,6 +58,9 @@ struct MapGeometryTests {
         let moved = cam.panned(dx: 0, dy: 100, width: 400, height: 800)
         #expect(moved.target.z < 0 && abs(moved.target.x) < 1e-4)
         #expect(cam.clamped().pitch == 90 && MapCamera(target: .zero, distance: 500, heading: -30).clamped().heading == 330)
+        // Far out, the view is steeper; close in, any tilt.
+        #expect(MapCamera(target: .zero, distance: 300, pitch: 30).clamped().pitch == 80)
+        #expect(MapCamera(target: .zero, distance: 10, pitch: 30).clamped().pitch == 30)
     }
 
     @Test func ridgesHidePeaksBehindThem() {
@@ -65,11 +68,39 @@ struct MapGeometryTests {
         var heights = [Float](repeating: 0, count: 25)
         for c in 0..<5 { heights[2 * 5 + c] = 2000 }
         let grid = HeightGrid(width: 5, height: 5, cellSize: 1000, center: center, heights: heights)
+        let frame = MapFrame(center: center, exaggeration: 1)
         let eye = SIMD3<Float>(0, 0.5, 2)  // south, low
-        #expect(!grid.isVisible(SIMD3(0, 0.2, -2), from: eye, exaggeration: 1))
-        #expect(grid.isVisible(SIMD3(0, 2, 0), from: eye, exaggeration: 1))  // the ridge itself
-        #expect(grid.isVisible(SIMD3(0, 0.2, -2), from: SIMD3(0, 8, 2), exaggeration: 1))  // from high above
+        #expect(!grid.isVisible(SIMD3(0, 0.2, -2), from: eye, frame: frame))
+        #expect(grid.isVisible(SIMD3(0, 2, 0), from: eye, frame: frame))  // the ridge itself
+        #expect(grid.isVisible(SIMD3(0, 0.2, -2), from: SIMD3(0, 8, 2), frame: frame))  // from high above
     }
 }
 
 private func simd_distance(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float { ((a - b) * (a - b)).sum().squareRoot() }
+
+private func near(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Bool { simd_distance(a, b) < 1e-3 }
+
+struct MapLayerTests {
+    @Test func farLayersLineUpWithPeaks() {
+        // A layer 300 km north of the frame centre: its vertices land where frame.point puts the same places.
+        let frame = MapFrame(center: GeoCoordinate(latitude: 46, longitude: 7), exaggeration: 1)
+        let north = GeoCoordinate(latitude: 46 + 300_000 / 111_320.0, longitude: 7)
+        let grid = HeightGrid.sample(center: north, size: 100_000, samples: 11) { _, _ in 500 }
+        let mesh = TerrainMesh(grid: grid, frame: frame)
+        let corner = grid.coordinate(row: 0, col: 10)
+        let expected = frame.point(corner, height: 500)
+        #expect(simd_distance(mesh.positions[10], expected) < 1e-3)
+        let inside = frame.point(grid.coordinate(row: 3.5, col: 6.25), height: 0)
+        #expect(abs((grid.sceneHeight(x: inside.x, z: inside.z, frame: frame) ?? 0) - 0.5) < 1e-4)
+    }
+
+    @Test func holeForTheDetailedLayer() {
+        let frame = MapFrame(center: GeoCoordinate(latitude: 46, longitude: 7), exaggeration: 1)
+        let grid = HeightGrid(width: 5, height: 5, cellSize: 1000, center: frame.center, heights: [Float](repeating: 0, count: 25))
+        let mesh = TerrainMesh(grid: grid, frame: frame)
+        #expect(mesh.indices.count == 16 * 6)
+        // The middle 2×2 km: the 4 cells inside go.
+        let holed = mesh.indices(width: 5, height: 5, excluding: (-1.01, -1.01, 1.01, 1.01))
+        #expect(holed.count == 12 * 6)
+    }
+}

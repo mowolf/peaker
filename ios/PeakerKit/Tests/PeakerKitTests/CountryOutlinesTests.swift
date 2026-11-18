@@ -47,7 +47,7 @@ struct CountryOutlinesTests {
         style.shading = 0
         let px = style.render(grid, countries: [2, 1, 0])
         #expect(Array(px[4..<7]) != Array(px[8..<11]))  // land and sea differ
-        #expect(Array(px[8..<11]) == [2, 7, 25])  // sea: water colour (0.01, 0.03, 0.10), truncated
+        #expect(Array(px[8..<11]) == [7, 20, 61])  // sea: water colour (0.03, 0.08, 0.24), truncated
         let plain = style.render(grid)
         #expect(Array(px[0..<3]) != Array(plain[0..<3]))  // border drawn between countries 2 and 1
     }
