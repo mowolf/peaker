@@ -71,6 +71,33 @@ final class AppModel {
     var selectedPeak: VisiblePeak?
     var showDownloads = false
     var showSettings = false
+    var showSearch = false
+
+    /// The peak picked in search: highlighted in the view, with a marker at the screen edge while it is off screen.
+    private(set) var searchTarget: VisiblePeak?
+
+    /// Highlight a peak found by search. In touch mode the view turns to it; while following the phone the
+    /// marker shows which way to turn.
+    func find(_ peak: VisiblePeak) {
+        searchTarget = peak
+        if !isFollowingDevice {
+            touchYaw = peak.azimuth
+            touchPitch = max(-45, min(45, peak.altitude))
+        }
+    }
+
+    func clearSearchTarget() { searchTarget = nil }
+
+    /// After a recompute: the target's new direction, or no target if it is no longer visible from here.
+    func refreshSearchTarget() {
+        guard let id = searchTarget?.id else { return }
+        searchTarget = horizonStore.visiblePeaks.first { $0.id == id }
+    }
+
+    /// Degrees to turn right (negative: left) to face the search target.
+    var turnToSearchTarget: Double? {
+        searchTarget.map { Geo.angleDifference($0.azimuth, heading) }
+    }
 
     /// The fixed viewpoint in use: the chosen one, or Gornergrat while there's no GPS fix.
     var fixedViewpoint: Viewpoint? {

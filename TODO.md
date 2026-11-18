@@ -174,6 +174,8 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       with large packs.
 - [x] **V-7** *(the first Xcode build with complete checking had no concurrency warnings)* Switch the app to
       Swift 6 language mode.
+- [x] **V-8** Peak search: find a peak visible from here by name (any language, accents ignored); it is highlighted
+      in the view, an edge marker and a "Turn 42° right" chip show the way while it is off screen.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
 - [ ] **V-6** *(icon done)* App icon, screenshots, privacy policy, TestFlight beta, App Store submission.
