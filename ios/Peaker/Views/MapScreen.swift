@@ -5,12 +5,15 @@ import UIKit
 
 /// The 3D map: our own terrain from the elevation tiles, peaks labelled where they can be seen.
 /// Drag to move, pinch to zoom, twist to turn; 2D/3D tilts between a flat map and a bird's-eye view.
+/// Zoomed out past the flat map's range it becomes a globe of the whole Earth.
 struct MapScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var dragStart: MapCamera?
-    @State private var pinchStart: MapCamera?
-    @State private var rotateStart: MapCamera?
+    @State private var globeDragStart: GlobeCamera?
+    /// Zoom value (flat: distance; globe: altitude) and magnification when the pinch started or changed mode.
+    @State private var pinchBase: (value: Float, magnification: CGFloat)?
+    @State private var rotateStart: Float?
     @State private var selected: VisiblePeak?
     @State private var showsSearch = false
     @State private var labelMemory = MapLabelMemory()
@@ -21,8 +24,10 @@ struct MapScreen: View {
             let size = geo.size
             let labels = layoutLabels(size: size)
             ZStack {
-                MapSceneView(camera: map.camera, entities: [map.overviewEntity, map.showsDetail ? map.detailEntity : nil],
-                             background: backgroundColor)
+                MapSceneView(camera: map.sceneCamera,
+                             entities: map.mode == .globe ? [map.globeEntity]
+                                 : [map.overviewEntity, map.showsDetail ? map.detailEntity : nil],
+                             background: map.mode == .globe ? Self.space : backgroundColor)
                     .allowsHitTesting(false)
                 Canvas(rendersAsynchronously: false) { context, _ in
                     drawPosition(&context, size: size)
@@ -65,8 +70,15 @@ struct MapScreen: View {
         return UIColor(red: CGFloat(w.r), green: CGFloat(w.g), blue: CGFloat(w.b), alpha: 1)
     }
 
+    private static let space = UIColor(red: 0.01, green: 0.012, blue: 0.03, alpha: 1)
+
     private func refresh() {
-        model.map.update(settings: model.settings, packs: model.packs.snapshot(), packVersion: model.packs.version)
+        let map = model.map, packs = model.packs.snapshot()
+        if map.mode == .globe {
+            map.buildGlobe(style: model.settings.mapStyle, packs: packs, packVersion: model.packs.version)
+        } else {
+            map.update(settings: model.settings, packs: packs, packVersion: model.packs.version)
+        }
     }
 
     private func select(_ peak: PeakInfo) {
@@ -80,33 +92,67 @@ struct MapScreen: View {
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
-                let start = dragStart ?? model.map.camera
-                if dragStart == nil { dragStart = start }
-                var moved = start.panned(dx: Float(value.translation.width), dy: Float(value.translation.height),
-                                         width: Float(size.width), height: Float(size.height))
-                // Keep pinch and rotation of a simultaneous gesture.
-                moved.distance = model.map.camera.distance
-                moved.heading = model.map.camera.heading
-                model.map.camera = moved
+                let map = model.map
+                let dx = Float(value.translation.width), dy = Float(value.translation.height)
+                if map.mode == .globe {
+                    let start = globeDragStart ?? map.globe
+                    if globeDragStart == nil { globeDragStart = start }
+                    var moved = start.panned(dx: dx, dy: dy, height: Float(size.height))
+                    moved.altitude = map.globe.altitude  // keep a simultaneous pinch
+                    moved.heading = map.globe.heading
+                    map.globe = moved.clamped()
+                } else {
+                    let start = dragStart ?? map.camera
+                    if dragStart == nil { dragStart = start }
+                    var moved = start.panned(dx: dx, dy: dy, width: Float(size.width), height: Float(size.height))
+                    // Keep pinch and rotation of a simultaneous gesture.
+                    moved.distance = map.camera.distance
+                    moved.heading = map.camera.heading
+                    map.camera = moved.clamped()
+                }
             }
             .onEnded { _ in
                 dragStart = nil
+                globeDragStart = nil
                 refresh()
             }
     }
 
+    /// Pinch zooms; past the flat map's farthest distance it turns into the globe, and back below
+    /// `MapModel.globeExitAltitude`.
     private var pinchGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                let start = pinchStart ?? model.map.camera
-                if pinchStart == nil { pinchStart = start }
-                var camera = model.map.camera
-                camera.distance = start.distance / Float(max(0.1, value.magnification))
-                model.map.camera = camera.clamped()
-                model.map.cameraDidChange()
+                let map = model.map
+                let m = max(0.05, value.magnification)
+                let current = map.mode == .globe ? map.globe.altitude : map.camera.distance
+                let base = pinchBase ?? (current, m)
+                if pinchBase == nil { pinchBase = base }
+                let wanted = base.value * Float(base.magnification / m)
+                let packs = model.packs.snapshot(), version = model.packs.version
+                if map.mode == .flat {
+                    if wanted > MapCamera.distanceRange.upperBound {
+                        map.enterGlobe(settings: model.settings, packs: packs, packVersion: version)
+                        pinchBase = (map.globe.altitude, m)
+                        return
+                    }
+                    var camera = map.camera
+                    camera.distance = wanted
+                    map.camera = camera.clamped()
+                    map.cameraDidChange()
+                } else {
+                    if wanted < MapModel.globeExitAltitude {
+                        map.leaveGlobe(settings: model.settings, packs: packs, packVersion: version)
+                        pinchBase = (map.camera.distance, m)
+                        return
+                    }
+                    var globe = map.globe
+                    globe.altitude = wanted
+                    map.globe = globe.clamped()
+                }
             }
             .onEnded { _ in
-                pinchStart = nil
+                pinchBase = nil
                 refresh()
             }
     }
@@ -114,11 +160,18 @@ struct MapScreen: View {
     private var rotateGesture: some Gesture {
         RotateGesture()
             .onChanged { value in
-                let start = rotateStart ?? model.map.camera
+                let map = model.map
+                let start = rotateStart ?? (map.mode == .globe ? map.globe.heading : map.camera.heading)
                 if rotateStart == nil { rotateStart = start }
-                var camera = model.map.camera
-                camera.heading = start.heading - Float(value.rotation.degrees)
-                model.map.camera = camera.clamped()
+                let heading = start - Float(value.rotation.degrees)
+                if map.mode == .globe {
+                    map.globe.heading = heading
+                    map.globe = map.globe.clamped()
+                } else {
+                    var camera = map.camera
+                    camera.heading = heading
+                    map.camera = camera.clamped()
+                }
             }
             .onEnded { _ in rotateStart = nil }
     }
@@ -138,7 +191,7 @@ struct MapScreen: View {
     private func layoutLabels(size: CGSize) -> [MapLabel] {
         let map = model.map
         let layers = map.layers
-        guard !layers.isEmpty else { return [] }
+        guard map.mode == .flat, !layers.isEmpty else { return [] }
         let entries = labelMemory.entries(for: layers, settings: model.settings)
         let camera = map.camera
         let eye = camera.eye
@@ -206,10 +259,18 @@ struct MapScreen: View {
 
     /// Your position (GPS or the fixed viewpoint): a blue dot.
     private func drawPosition(_ context: inout GraphicsContext, size: CGSize) {
-        guard let frame = model.map.frame, let here = model.currentViewpoint else { return }
-        var p = frame.point(here, height: 0)
-        p.y = model.map.groundHeight(x: p.x, z: p.z) ?? 0
-        guard let s = model.map.camera.project(p, width: Float(size.width), height: Float(size.height)) else { return }
+        guard let here = model.currentViewpoint else { return }
+        let map = model.map
+        let screen: (x: Float, y: Float)?
+        if map.mode == .globe {
+            screen = map.globe.project(Globe.point(here), width: Float(size.width), height: Float(size.height))
+        } else {
+            guard let frame = map.frame else { return }
+            var p = frame.point(here, height: 0)
+            p.y = map.groundHeight(x: p.x, z: p.z) ?? 0
+            screen = map.camera.project(p, width: Float(size.width), height: Float(size.height)).map { ($0.x, $0.y) }
+        }
+        guard let s = screen else { return }
         let center = CGPoint(x: CGFloat(s.x), y: CGFloat(s.y))
         context.fill(Path(ellipseIn: CGRect(x: center.x - 10, y: center.y - 10, width: 20, height: 20)),
                      with: .color(.white))
@@ -259,7 +320,7 @@ final class MapLabelMemory {
 
 /// RealityKit scene without the camera image: the terrain model and a camera that follows `MapCamera`.
 struct MapSceneView: UIViewRepresentable {
-    let camera: MapCamera
+    let camera: SceneCamera
     /// Terrain layers to show (nil entries are skipped).
     let entities: [ModelEntity?]
     let background: UIColor
@@ -296,6 +357,8 @@ struct MapSceneView: UIViewRepresentable {
             c.shown = wanted
         }
         c.cameraEntity.camera.fieldOfViewInDegrees = camera.fieldOfView
+        c.cameraEntity.camera.near = camera.near
+        c.cameraEntity.camera.far = camera.far
         c.cameraEntity.look(at: camera.target, from: camera.eye, upVector: camera.up, relativeTo: nil)
     }
 }
@@ -318,13 +381,13 @@ private struct MapTopControls: View {
                 ProgressView()
                     .padding(12)
                     .glassEffect(.regular, in: .circle)
-            } else if map.overview == nil {
+            } else if map.mode == .flat && map.overview == nil {
                 Text("Waiting for your position…")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .glassEffect(.regular, in: .capsule)
-            } else if map.overview?.hasData == false {
+            } else if map.mode == .flat && map.overview?.hasData == false {
                 Text("No offline data here")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
@@ -333,13 +396,15 @@ private struct MapTopControls: View {
             }
             Spacer()
             VStack(spacing: 10) {
-                GlassCircleButton(title: map.camera.pitch > 80 ? "3D view" : "Flat map", action: toggleTilt) {
-                    Text(map.camera.pitch > 80 ? "3D" : "2D").font(.headline)
+                if map.mode == .flat {
+                    GlassCircleButton(title: map.camera.pitch > 80 ? "3D view" : "Flat map", action: toggleTilt) {
+                        Text(map.camera.pitch > 80 ? "3D" : "2D").font(.headline)
+                    }
                 }
                 GlassCircleButton(title: "North up", action: northUp) {
                     Image(systemName: "location.north.line.fill")
                         .font(.title3)
-                        .rotationEffect(.degrees(Double(-map.camera.heading)))
+                        .rotationEffect(.degrees(Double(-(map.mode == .globe ? map.globe.heading : map.camera.heading))))
                 }
                 GlassCircleButton(title: "My position", action: locate) {
                     Image(systemName: "location.fill").font(.title3)
@@ -351,11 +416,17 @@ private struct MapTopControls: View {
     }
 
     private func toggleTilt() {
-        withAnimation(.smooth) { model.map.camera.pitch = model.map.camera.pitch > 80 ? 55 : 90 }
+        var camera = model.map.camera
+        camera.pitch = camera.pitch > 80 ? 55 : 90
+        model.map.camera = camera.clamped()
     }
 
     private func northUp() {
-        withAnimation(.smooth) { model.map.camera.heading = 0 }
+        if model.map.mode == .globe {
+            model.map.globe.heading = 0
+        } else {
+            model.map.camera.heading = 0
+        }
     }
 
     private func locate() {

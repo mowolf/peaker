@@ -6,7 +6,7 @@ import PeakerKit
 ///
 /// Two levels share one scene frame:
 /// - `detail`: 40 km around the view from the full-resolution tiles (30 m where downloaded);
-/// - `overview`: up to a few thousand km from ~1 km overview tiles, with the world around the downloaded data:
+/// - `overview`: up to ~1,800 km from ~700 m overview tiles, with the world around the downloaded data:
 ///   countries without data in black, sea, borders.
 struct MapTerrain: Sendable {
     enum Level: Sendable { case detail, overview }
@@ -41,7 +41,7 @@ struct MapTerrain: Sendable {
     static let detailSize = 40_000.0
 
     static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader, overview: OverviewTiles,
-                      outlines: CountryOutlines?) async -> MapTerrain {
+                      outlines: CountryOutlines?) async -> MapTerrain? {
         let center = request.center
         let ids = TileID.covering(center: center, radius: request.size * 0.75)
         let boxes = GeoBox.covering(ids, margin: TileLoader.summitMargin)
@@ -57,8 +57,10 @@ struct MapTerrain: Sendable {
         case .overview:
             peaks = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes, limit: 400)
             tiles = await overview.tiles(ids, files: packs.tileFiles)
-            meshSamples = 257
+            meshSamples = 513
         }
+        // Stop early when a newer request replaced this one (checked between the expensive steps).
+        if Task.isCancelled { return nil }
         let textureSamples = 2048
         // Where no tile is downloaded there is no height: the texture then shows the country (black) or the sea.
         let heightAt: (Double, Double) -> Float? = { lat, lon in
@@ -66,6 +68,7 @@ struct MapTerrain: Sendable {
         }
         let grid = HeightGrid.sample(center: center, size: request.size, samples: meshSamples, heightAt: heightAt)
         let textureGrid = HeightGrid.sample(center: center, size: request.size, samples: textureSamples, heightAt: heightAt)
+        if Task.isCancelled { return nil }
         let mask = outlines.map { countryMask($0, for: textureGrid) }
         let style = request.style.style
         let texture = mask.map { style.render(textureGrid, countries: $0, exaggeration: request.frame.exaggeration) }
@@ -120,5 +123,35 @@ struct MapTerrain: Sendable {
     func offCentre(_ target: SIMD3<Float>) -> Float {
         let c = frame.point(center, height: 0)
         return max(abs(target.x - c.x), abs(target.z - c.z)) / Float(size / 1000)
+    }
+}
+
+/// The equirectangular world image for the globe: every downloaded tile painted from its overview tile, the
+/// rest of the world from the country outlines (black land, sea, borders).
+enum WorldImage {
+    static let width = 4096
+
+    static func build(style: MapStyleChoice, packs: PackSnapshot, overview: OverviewTiles,
+                      outlines: CountryOutlines?) async -> [UInt8]? {
+        let w = width, h = width / 2
+        var heights = [Float](repeating: .nan, count: w * h)
+        let ids = Array(packs.tileFiles.keys)
+        // In batches, so a world of downloads doesn't have to sit in memory at once.
+        for start in stride(from: 0, to: ids.count, by: 200) {
+            if Task.isCancelled { return nil }
+            let batch = Array(ids[start..<min(ids.count, start + 200)])
+            for (id, tile) in await overview.tiles(batch, files: packs.tileFiles) {
+                let c0 = Int((Double(id.lon) + 180) / 360 * Double(w)), c1 = Int((Double(id.lon + 1) + 180) / 360 * Double(w))
+                let r0 = Int((90 - Double(id.lat + 1)) / 180 * Double(h)), r1 = Int((90 - Double(id.lat)) / 180 * Double(h))
+                for r in max(0, r0)..<min(h, r1) {
+                    let lat = 90 - (Double(r) + 0.5) / Double(h) * 180
+                    for c in max(0, c0)..<min(w, c1) {
+                        heights[r * w + c] = tile.height(latitude: lat, longitude: (Double(c) + 0.5) / Double(w) * 360 - 180)
+                    }
+                }
+            }
+        }
+        if Task.isCancelled { return nil }
+        return style.style.renderWorld(width: w, outlines: outlines, heights: heights)
     }
 }

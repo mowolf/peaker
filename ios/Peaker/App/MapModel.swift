@@ -6,7 +6,7 @@ import RealityKit
 
 /// The 3D map's state: camera, the terrain layers and their RealityKit models, and what to highlight.
 ///
-/// Two layers in one scene frame: an overview sized to the zoom (160 km to 2,400 km, from ~1 km overview tiles,
+/// Two layers in one scene frame: an overview sized to the zoom (120 km to 1,800 km, from ~700 m overview tiles,
 /// with countries without data in black) and, closer than 70 km, a detailed 40 km square on top of it, which
 /// cuts a hole into the overview. Both are rebuilt around the view in the background when it moves or zooms
 /// far enough; nothing is swapped until the new layer is ready.
@@ -24,6 +24,15 @@ final class MapModel {
     var highlightedPeakID: String?
     var filter: MapFilter = .all
 
+    /// Flat map (terrain layers) or, zoomed out beyond the flat map's range, the globe.
+    enum Mode { case flat, globe }
+    private(set) var mode = Mode.flat
+    var globe = GlobeCamera(center: GeoCoordinate(latitude: 46, longitude: 8), altitude: 3000)
+    private(set) var globeEntity: ModelEntity?
+
+    /// Zooming out past the flat map's farthest distance shows the globe; zooming in below this leaves it.
+    static let globeExitAltitude: Float = 350
+
     /// The detailed layer is shown (and kept up to date) closer than this (km).
     static let detailDistance: Float = 70
     /// Re-centre the frame when the view gets this far (km) from its centre.
@@ -37,10 +46,13 @@ final class MapModel {
     @ObservationIgnored private let loader = TileLoader()
     @ObservationIgnored private let overviewTiles = OverviewTiles()
     @ObservationIgnored private var outlines: CountryOutlines?
-    @ObservationIgnored private var building: [MapTerrain.Level: MapTerrain.Request] = [:]
-    @ObservationIgnored private var queued: [MapTerrain.Level: MapTerrain.Request] = [:]
+    /// The latest request per level and its build.
+    @ObservationIgnored private var requested: [MapTerrain.Level: MapTerrain.Request] = [:]
+    @ObservationIgnored private var tasks: [MapTerrain.Level: Task<Void, Never>] = [:]
     @ObservationIgnored private var holeFor: (overview: UUID, detail: UUID?)?
     @ObservationIgnored private var packs: PackSnapshot?
+    @ObservationIgnored private var globeKey: (style: MapStyleChoice, packVersion: Int)?
+    @ObservationIgnored private var globeTask: Task<Void, Never>?
 
     enum MapFilter: String, CaseIterable, Identifiable {
         case all, peakBook
@@ -53,6 +65,7 @@ final class MapModel {
     /// Show the area around `coordinate` (opening the map, "Show on map", a search result).
     func focus(on coordinate: GeoCoordinate, distance: Float? = nil, settings: AppSettings, packs: PackSnapshot,
                packVersion: Int) {
+        mode = .flat  // a place to look at closely: always on the flat map
         let exaggeration = Float(settings.mapExaggeration)
         if frame == nil || frame?.exaggeration != exaggeration
             || length(frame!.point(coordinate, height: 0)) > Self.frameRadius {
@@ -83,9 +96,9 @@ final class MapModel {
             guard let layer else { return true }
             return layer.style != settings.mapStyle || layer.packVersion != packVersion || layer.frame != frame
         }
-        // Overview: about 7× the camera distance across, rebuilt when the view leaves its middle or the zoom
-        // changed a lot.
-        let wanted = Double(min(2400, max(160, camera.distance * 7))) * 1000
+        // Overview: about 4.5× the camera distance across (zoomed out the view looks down steeply, so that covers
+        // the screen), rebuilt when the view leaves its middle or the zoom changed a lot.
+        let wanted = Double(min(1800, max(120, camera.distance * 4.5))) * 1000
         if stale(overview) || overview!.offCentre(camera.target) > 0.25
             || !(0.55...1.8).contains(overview!.size / wanted) {
             build(.init(level: .overview, frame: frame, center: here, size: wanted, style: settings.mapStyle,
@@ -99,6 +112,10 @@ final class MapModel {
     }
 
     private func resetFrame(center: GeoCoordinate, exaggeration: Float) {
+        for task in tasks.values { task.cancel() }
+        tasks = [:]
+        requested = [:]
+        isBuilding = false
         frame = MapFrame(center: center, exaggeration: exaggeration)
         detail = nil
         overview = nil
@@ -115,32 +132,91 @@ final class MapModel {
         return nil
     }
 
-    // MARK: - Building
+    // MARK: - Globe
 
-    private func build(_ request: MapTerrain.Request) {
-        if building[request.level] == request { return }
-        guard building[request.level] == nil else {
-            queued[request.level] = request  // the latest wins
+    /// What the scene's camera does: the flat map's camera, or the globe's.
+    var sceneCamera: SceneCamera {
+        switch mode {
+        case .flat:
+            SceneCamera(eye: camera.eye, target: camera.target, up: camera.up, fieldOfView: camera.fieldOfView,
+                        near: 0.05, far: 8000)
+        case .globe:
+            SceneCamera(eye: globe.eye, target: globe.target, up: globe.up, fieldOfView: globe.fieldOfView,
+                        near: max(1, globe.altitude * 0.05), far: globe.altitude + 2 * Globe.radius)
+        }
+    }
+
+    /// Switch to the globe above the place the flat map shows.
+    func enterGlobe(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        guard mode == .flat else { return }
+        let center = frame?.coordinate(x: camera.target.x, z: camera.target.z) ?? globe.center
+        globe = GlobeCamera(center: center, altitude: MapCamera.distanceRange.upperBound + 50, heading: camera.heading)
+            .clamped()
+        mode = .globe
+        buildGlobe(style: settings.mapStyle, packs: packs, packVersion: packVersion)
+    }
+
+    /// Back to the flat map at the globe's centre.
+    func leaveGlobe(settings: AppSettings, packs: PackSnapshot, packVersion: Int) {
+        guard mode == .globe else { return }
+        mode = .flat
+        camera.heading = globe.heading
+        focus(on: globe.center, distance: MapCamera.distanceRange.upperBound * 0.9, settings: settings, packs: packs,
+              packVersion: packVersion)
+    }
+
+    /// The globe's model: built once per style and set of downloads.
+    func buildGlobe(style: MapStyleChoice, packs: PackSnapshot, packVersion: Int) {
+        if let globeKey, globeKey.style == style, globeKey.packVersion == packVersion, globeEntity != nil || globeTask != nil {
             return
         }
+        globeKey = (style, packVersion)
+        globeTask?.cancel()
+        isBuilding = true
+        let overviewTiles = overviewTiles
+        globeTask = Task {
+            let outlines = await self.loadOutlines()
+            let work = Task.detached(priority: .userInitiated) {
+                await WorldImage.build(style: style, packs: packs, overview: overviewTiles, outlines: outlines)
+            }
+            let image = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            guard !Task.isCancelled, let image else { return }
+            let entity = try? await Self.makeEntity(mesh: Globe.mesh(), texture: image, width: WorldImage.width,
+                                                    height: WorldImage.width / 2, indices: nil)
+            guard self.globeKey?.style == style, self.globeKey?.packVersion == packVersion else { return }
+            self.globeEntity = entity
+            self.globeTask = nil
+            self.isBuilding = !self.tasks.isEmpty
+        }
+    }
+
+    // MARK: - Building
+
+    /// Start building a layer. A newer request for the same level cancels the older build instead of waiting
+    /// behind it, and only the latest request's result is shown: an abandoned or slow build can never block
+    /// the map.
+    private func build(_ request: MapTerrain.Request) {
+        let level = request.level
+        if requested[level] == request { return }  // already building (or built) exactly this
         guard let packs else { return }
-        building[request.level] = request
+        requested[level] = request
+        tasks[level]?.cancel()
         isBuilding = true
         let loader = loader, overviewTiles = overviewTiles
-        Task {
+        tasks[level] = Task {
             let outlines = await self.loadOutlines()
-            let terrain = await Task.detached(priority: request.level == .detail ? .userInitiated : .utility) {
+            let work = Task.detached(priority: level == .detail ? .userInitiated : .utility) {
                 await MapTerrain.build(request, packs: packs, loader: loader, overview: overviewTiles, outlines: outlines)
-            }.value
-            let entity = try? await Self.makeEntity(terrain, indices: terrain.mesh.indices)
-            if terrain.frame == self.frame {  // not outdated by a new frame meanwhile
-                self.install(terrain, entity: entity)
             }
-            self.building[request.level] = nil
-            if let next = self.queued.removeValue(forKey: request.level) {
-                self.build(next)
+            let terrain = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            var entity: ModelEntity?
+            if let terrain, !Task.isCancelled {
+                entity = try? await Self.makeEntity(terrain, indices: terrain.mesh.indices)
             }
-            self.isBuilding = !self.building.isEmpty
+            guard self.requested[level] == request else { return }  // superseded meanwhile
+            if let terrain, terrain.frame == self.frame { self.install(terrain, entity: entity) }
+            self.tasks[level] = nil
+            self.isBuilding = !self.tasks.isEmpty
         }
     }
 
@@ -201,11 +277,16 @@ final class MapModel {
 
     /// The layer as a RealityKit model: the style texture already has light and shade, so it is unlit.
     private static func makeEntity(_ terrain: MapTerrain, indices: [UInt32]) async throws -> ModelEntity {
-        let mesh = try makeMesh(terrain.mesh, indices: indices)
-        let size = terrain.textureSize
-        guard let provider = CGDataProvider(data: Data(terrain.texture) as CFData),
-              let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
-                                  bytesPerRow: size * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        try await makeEntity(mesh: terrain.mesh, texture: terrain.texture, width: terrain.textureSize,
+                             height: terrain.textureSize, indices: indices)
+    }
+
+    private static func makeEntity(mesh source: TerrainMesh, texture pixels: [UInt8], width: Int, height: Int,
+                                   indices: [UInt32]?) async throws -> ModelEntity {
+        let mesh = try makeMesh(source, indices: indices ?? source.indices)
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                  bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         else { throw CocoaError(.coderInvalidValue) }
@@ -218,3 +299,13 @@ final class MapModel {
 }
 
 private func length(_ v: SIMD3<Float>) -> Float { (v * v).sum().squareRoot() }
+
+/// Camera placement for the scene (flat map or globe).
+struct SceneCamera: Equatable {
+    var eye: SIMD3<Float>
+    var target: SIMD3<Float>
+    var up: SIMD3<Float>
+    var fieldOfView: Float
+    var near: Float
+    var far: Float
+}
