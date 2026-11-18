@@ -173,6 +173,10 @@ struct PeakEntryTests {
         #expect(wish.suggestedFileName == "Aiguille du Midi - Nord.md")
         #expect(PeakEntry.uniqueFileName("A.md", existing: ["a.md", "A 2.md"]) == "A 3.md")
         #expect(PeakEntry.uniqueFileName("B.md", existing: ["a.md"]) == "B.md")
+        #expect(entry.hasAutomaticName("2026-08-14 Matterhorn.md"))
+        #expect(entry.hasAutomaticName("2026-08-14 matterhorn 3.md"))
+        #expect(!entry.hasAutomaticName("Best day ever.md"))
+        #expect(!entry.hasAutomaticName("2026-08-14 Matterhorn with Anna.md"))
     }
 
     @Test func dayDates() {

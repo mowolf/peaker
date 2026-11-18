@@ -94,7 +94,10 @@ private struct ViewerLifecycle: ViewModifier {
                 await model.recompute()
             }
             .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-            .onChange(of: model.packs.version) { Task { await model.recompute() } }
+            .onChange(of: model.packs.version) {
+                Task { await model.recompute() }
+                Task { await model.peakBook.setDatabases(model.packs.snapshot().peakDatabases) }
+            }
             // A new result moves the search target (new viewpoint) or drops it (no longer visible).
             .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
             // Pause camera and sensors in the background (battery), resume as they were.

@@ -131,6 +131,18 @@ public struct PeakEntry: Sendable, Equatable {
         return "\(stem) \(n).md"
     }
 
+    /// True if `fileName` is the name the app would give this entry, possibly numbered ("… 2.md"), i.e. the user
+    /// hasn't renamed the file. Such files are renamed when the entry changes (a wishlist entry gets its date).
+    public func hasAutomaticName(_ fileName: String) -> Bool {
+        let suggested = suggestedFileName.lowercased()
+        let name = fileName.lowercased()
+        if name == suggested { return true }
+        let stem = suggested.dropLast(3) + " "
+        guard name.hasPrefix(stem), name.hasSuffix(".md") else { return false }
+        let number = name.dropFirst(stem.count).dropLast(3)
+        return !number.isEmpty && number.allSatisfy(\.isNumber)
+    }
+
     static func sanitizedFileName(_ text: String) -> String {
         let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters).union(.newlines)
         var cleaned = String(String.UnicodeScalarView(text.unicodeScalars.map { forbidden.contains($0) ? "-" : $0 }))

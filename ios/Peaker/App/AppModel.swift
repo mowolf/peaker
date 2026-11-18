@@ -16,6 +16,8 @@ final class AppModel {
     let countryLocator = CountryLocator()
     /// Horizon, visible peaks and sun for the current viewpoint.
     let horizonStore = HorizonStore()
+    /// Climbed peaks, wishlist and diary entries (Markdown files in Documents).
+    let peakBook = PeakBook()
 
     /// Current interface orientation (portrait, or landscape for the wide panorama view).
     private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
@@ -172,8 +174,10 @@ final class AppModel {
         setFollowing(true)  // start with automatic direction when the device has the sensors
         // Catalog and first view at the same time (the catalog only needs the network).
         async let catalog: Void = packs.refreshCatalog()
+        async let book: Void = peakBook.setDatabases(packs.snapshot().peakDatabases)
         await recompute(force: true)
         await catalog
+        await book
     }
 
     /// Turn automatic direction (gyro + compass) on or off. Turning it off keeps the current view.
@@ -234,6 +238,8 @@ final class AppModel {
             if isFollowingDevice { motion.start() }
             if showsCamera { camera.start() }
             horizonStore.refreshSun()
+            // Entries may have been edited in the Files app meanwhile.
+            if peakBook.isLoaded { Task { await peakBook.reload() } }
         } else {
             camera.stop()
             motion.stop()
