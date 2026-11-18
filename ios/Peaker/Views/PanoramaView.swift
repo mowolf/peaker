@@ -470,7 +470,7 @@ struct PanoramaView: View {
                                          marks: book.marksVersion)
         return labelMemory.entries(for: key) {
             let marks = book.marks
-            store.visiblePeaks.map { v in
+            return store.visiblePeaks.map { v in
                 let name = v.peak.displayName(language: key.language)
                 var detailParts: [String] = []
                 if let elevation = v.peak.elevation { detailParts.append(settings.elevation(elevation)) }

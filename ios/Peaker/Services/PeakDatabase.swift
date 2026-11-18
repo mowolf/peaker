@@ -64,6 +64,28 @@ enum PeakDatabase {
         return found
     }
 
+    /// Peaks whose name (any language, alternate names) matches `query` word by word as prefixes, accents
+    /// ignored; most important first, de-duplicated across databases.
+    static func search(_ query: String, in databases: [URL], limit: Int = 40) -> [PeakInfo] {
+        guard let match = PeakSearch.ftsQuery(query) else { return [] }
+        let sql = """
+            SELECT \(columns) FROM peaks_fts f JOIN peaks p ON p.rowid = f.rowid
+            WHERE peaks_fts MATCH ? ORDER BY p.importance DESC LIMIT ?
+            """
+        var seen = Set<String>()
+        var out: [PeakInfo] = []
+        for url in databases {
+            withStatement(sql, in: url) { stmt in
+                sqlite3_bind_text(stmt, 1, match, -1, sqliteTransient)
+                sqlite3_bind_int(stmt, 2, Int32(limit))
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    if let p = peak(stmt), seen.insert(p.id).inserted { out.append(p) }
+                }
+            }
+        }
+        return Array(out.sorted { $0.importance > $1.importance }.prefix(limit))
+    }
+
     // MARK: - SQLite
 
     /// SQLite copies bound strings (Swift strings are temporary).

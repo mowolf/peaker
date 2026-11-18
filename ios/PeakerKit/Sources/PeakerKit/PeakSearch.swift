@@ -39,6 +39,15 @@ public enum PeakSearch {
         return ranked.prefix(limit).map(\.match)
     }
 
+    /// SQLite FTS5 query for the peak databases' name index: every word as a prefix, all required
+    /// ("piz pal" → `"piz"* "pal"*`). Quotes and operators typed by the user can't break the query. Nil when
+    /// there is nothing to search for.
+    public static func ftsQuery(_ text: String) -> String? {
+        let words = text.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        guard !words.isEmpty else { return nil }
+        return words.prefix(6).map { "\"\($0)\"*" }.joined(separator: " ")
+    }
+
     /// 0: the name starts with the query, 1: a word does, 2: it is somewhere inside; nil: no match.
     static func rank(of needle: String, in haystack: String) -> Int? {
         guard let range = haystack.range(of: needle) else { return nil }

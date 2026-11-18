@@ -46,6 +46,13 @@ struct PeakSearchTests {
         #expect(PeakSearch.search("xyz", in: peaks, language: nil).isEmpty)
     }
 
+    @Test func ftsQueries() {
+        #expect(PeakSearch.ftsQuery("Piz Pal") == "\"Piz\"* \"Pal\"*")
+        #expect(PeakSearch.ftsQuery("Dent d'Hérens") == "\"Dent\"* \"d\"* \"Hérens\"*")
+        #expect(PeakSearch.ftsQuery("a\" OR NEAR(") == "\"a\"* \"OR\"* \"NEAR\"*")
+        #expect(PeakSearch.ftsQuery(" - ") == nil)
+    }
+
     // MARK: Edge marker
 
     private let pose = CameraPose(yaw: 0, pitch: 0, focalLength: 500, centerX: 200, centerY: 400)
