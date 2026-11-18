@@ -109,6 +109,10 @@ public struct VisiblePeak: Sendable, Identifiable, Hashable {
     public var altitude: Double
     public var distance: Double
     public var id: String { peak.id }
+
+    public init(peak: PeakInfo, azimuth: Double, altitude: Double, distance: Double) {
+        self.peak = peak; self.azimuth = azimuth; self.altitude = altitude; self.distance = distance
+    }
 }
 
 public struct HorizonResult: Sendable {
