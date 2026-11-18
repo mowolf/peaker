@@ -46,7 +46,7 @@ struct GlobeTests {
         turned.heading = 90
         #expect(turned.panned(dx: 0, dy: 100, height: 800).center.longitude > 8)
         #expect(GlobeCamera(center: GeoCoordinate(latitude: 89, longitude: 190), altitude: 1).clamped()
-            == GlobeCamera(center: GeoCoordinate(latitude: 85, longitude: -170), altitude: 300))
+            == GlobeCamera(center: GeoCoordinate(latitude: 85, longitude: -170), altitude: 100))
     }
 
     @Test func worldImage() throws {

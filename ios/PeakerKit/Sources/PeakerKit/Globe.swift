@@ -56,7 +56,7 @@ public struct GlobeCamera: Sendable, Equatable {
     /// Vertical field of view (degrees).
     public var fieldOfView: Float = 50
 
-    public static let altitudeRange: ClosedRange<Float> = 300...25_000
+    public static let altitudeRange: ClosedRange<Float> = 100...25_000
 
     public init(center: GeoCoordinate, altitude: Float, heading: Float = 0) {
         self.center = center; self.altitude = altitude; self.heading = heading

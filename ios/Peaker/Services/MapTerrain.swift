@@ -4,14 +4,13 @@ import PeakerKit
 /// One layer of the map: a square of terrain with its style texture, the heights behind both (for label
 /// visibility) and the peaks on it. Built off the main thread; the RealityKit model is made on the main actor.
 ///
-/// Three levels share one scene frame:
+/// Two levels share one scene frame:
 /// - `detail`: 40 km around the view from the full-resolution tiles (30 m where downloaded);
-/// - `regional`: up to 240 km from the 90 m tiles;
-/// - `overview`: up to ~1,800 km from ~700 m overview tiles, with the world around the downloaded data:
-///   countries without data in black, sea, borders.
+/// - `regional`: up to 320 km from the 90 m tiles, with the world around the downloaded data: countries without
+///   data in black, sea, lakes, borders.
 struct MapTerrain: Sendable {
     /// Finest first.
-    enum Level: Sendable, CaseIterable { case detail, regional, overview }
+    enum Level: Sendable, CaseIterable { case detail, regional }
 
     /// Changes with every build, so the scene knows when to swap its model.
     let id = UUID()
@@ -42,7 +41,7 @@ struct MapTerrain: Sendable {
 
     static let detailSize = 40_000.0
 
-    static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader, overview: OverviewTiles,
+    static func build(_ request: Request, packs: PackSnapshot, loader: TileLoader,
                       outlines: CountryOutlines?) async -> MapTerrain? {
         let center = request.center
         let ids = TileID.covering(center: center, radius: request.size * 0.75)
@@ -63,10 +62,6 @@ struct MapTerrain: Sendable {
                                        peaks: all, version: request.packVersion)
             peaks = Array(all.sorted { $0.importance > $1.importance }.prefix(1500))
             meshSamples = 641
-        case .overview:
-            peaks = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes, limit: 400)
-            tiles = await overview.tiles(ids, files: packs.tileFiles)
-            meshSamples = 513
         }
         // Stop early when a newer request replaced this one (checked between the expensive steps).
         if Task.isCancelled { return nil }
@@ -82,12 +77,8 @@ struct MapTerrain: Sendable {
         let style = request.style.style
         let texture = mask.map { style.render(textureGrid, countries: $0, exaggeration: request.frame.exaggeration) }
             ?? style.render(textureGrid, exaggeration: request.frame.exaggeration)
-        // The overview lies a little under the detailed layer, so the two never flicker where they overlap.
-        let lowered: Float = switch request.level {
-        case .detail: 0
-        case .regional: 0.04 * request.frame.exaggeration
-        case .overview: 0.08 * request.frame.exaggeration
-        }
+        // The regional layer lies a little under the detailed one, so the two never flicker where they overlap.
+        let lowered: Float = request.level == .regional ? 0.04 * request.frame.exaggeration : 0
         let half = request.size / 2
         let inside = peaks.filter { p in
             let n = (p.coordinate.latitude - center.latitude) * 111_320
@@ -124,7 +115,7 @@ struct MapTerrain: Sendable {
         grid.sceneHeight(x: x, z: z, frame: frame)
     }
 
-    /// Scene rectangle (x, z) the layer covers, slightly inset: the hole a detailed layer cuts into the overview.
+    /// Scene rectangle (x, z) the layer covers, slightly inset: the hole the detailed layer cuts into the regional one.
     var sceneRect: (minX: Float, minZ: Float, maxX: Float, maxZ: Float) {
         let a = frame.point(grid.coordinate(row: 0, col: 0), height: 0)
         let b = frame.point(grid.coordinate(row: Double(grid.height - 1), col: Double(grid.width - 1)), height: 0)
