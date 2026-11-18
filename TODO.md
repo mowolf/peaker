@@ -202,7 +202,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 ## Milestone 10 — Entry files and climbed peaks
 
-- [ ] **B-1** Entry format (PeakerKit `PeakEntry`): YAML front matter + free Markdown body. File name
+- [x] **B-1** Entry format (PeakerKit `PeakEntry`): YAML front matter + free Markdown body. File name
       `2026-08-14 Matterhorn.md` (date, first peak; a number is added on clashes); wishlist entries
       `Matterhorn.md`, renamed with the date once climbed. Only the keys below are read;
       unknown keys and comments are kept unchanged when the app saves, so hand edits survive:
@@ -221,16 +221,17 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       # Matterhorn via the Hörnli ridge
       Text …
       ```
-- [ ] **B-2** Reader/writer with unit tests: round trip, missing or misspelt fields, extra keys, Windows line endings,
+- [x] **B-2** Reader/writer with unit tests: round trip, missing or misspelt fields, extra keys, Windows line endings,
       files without front matter (shown as "unlinked", not dropped).
-- [ ] **B-3** Peak matching: `id` → `peak_aliases` → nearest peak within 200 m of the snapshot coordinates
+- [x] **B-3** Peak matching: `id` → `peak_aliases` → nearest peak within 200 m of the snapshot coordinates
       (`PeakDatabase.peak(id:)` and `peak(near:)`); no match keeps the snapshot.
-- [ ] **B-4** `PeakBook` store (main actor): scans the folder at launch and on changes, keeps the index
-      (peak ID → entries) cached in Application Support, writes files atomically.
-- [ ] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
+- [x] **B-4** `PeakBook` store (main actor): reads the folder at launch, when the app returns to the foreground and
+      when the installed peak data changes; matches entries to peaks off the main thread; writes files atomically.
+      No on-disk index: a scan of a few hundred small files takes milliseconds (add one if that changes).
+- [x] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
       peak's entries. Climbing a wishlist peak updates its planned entry instead of adding a second file.
-- [ ] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
-- [ ] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
+- [x] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
+- [x] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
 
 ## Milestone 11 — Peak book and diary
 

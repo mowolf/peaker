@@ -13,6 +13,7 @@ struct ViewerView: View {
             VStack(spacing: 12) {
                 TopBar()
                 StatusBanner()
+                SummitPrompt()
                 Spacer()
                 if model.searchTarget != nil {
                     SearchTargetChip()
@@ -54,7 +55,7 @@ private struct ViewerSheets: ViewModifier {
         content
             .sheet(item: $model.selectedPeak) { peak in
                 PeakDetailView(visible: peak)
-                    .presentationDetents([.height(340), .large])
+                    .presentationDetents([.height(420), .large])
             }
             .sheet(isPresented: $model.showDownloads) {
                 DownloadsView()
@@ -94,7 +95,10 @@ private struct ViewerLifecycle: ViewModifier {
                 await model.recompute()
             }
             .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-            .onChange(of: model.packs.version) { Task { await model.recompute() } }
+            .onChange(of: model.packs.version) {
+                Task { await model.recompute() }
+                Task { await model.peakBook.setDatabases(model.packs.snapshot().peakDatabases) }
+            }
             // A new result moves the search target (new viewpoint) or drops it (no longer visible).
             .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
             // Pause camera and sensors in the background (battery), resume as they were.
@@ -230,6 +234,63 @@ private struct StatusBanner: View {
         .padding(.vertical, 10)
         .contentShape(.rect(cornerRadius: 20))
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+    }
+}
+
+/// Standing on a summit (GPS): offer to record the climb, once per peak and day.
+private struct SummitPrompt: View {
+    @Environment(AppModel.self) private var model
+    @State private var failed = false
+    @State private var recorded = 0
+
+    var body: some View {
+        Group {
+            if let summit = model.summitToRecord {
+                HStack(spacing: 12) {
+                    Image(systemName: "flag.fill")
+                        .font(.title3)
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("On \(summit.displayName(language: model.settings.peakLanguage))")
+                            .font(.subheadline.weight(.semibold))
+                        Text(failed ? "Couldn't save. Try again from the peak's details." : "Mark it as climbed today?")
+                            .font(.caption)
+                            .foregroundStyle(failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    }
+                    Spacer(minLength: 4)
+                    Button("Climbed") { record(summit) }
+                        .buttonStyle(.glassProminent)
+                        .tint(.green)
+                    Button { withAnimation(.smooth) { model.dismissSummitPrompt() } } label: {
+                        Image(systemName: "xmark")
+                            .font(.footnote.weight(.bold))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Not now")
+                }
+                .padding(.leading, 14)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.smooth, value: model.summitToRecord?.id)
+        .sensoryFeedback(.success, trigger: recorded)
+    }
+
+    private func record(_ summit: PeakInfo) {
+        do {
+            try withAnimation(.smooth) {
+                try model.peakBook.markClimbed(summit, on: DayDate(Date()), language: model.settings.peakLanguage)
+            }
+            failed = false
+            recorded += 1
+        } catch {
+            failed = true
+        }
     }
 }
 

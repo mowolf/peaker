@@ -67,6 +67,9 @@ targets:
         UIRequiredDeviceCapabilities:
           - arm64
         ITSAppUsesNonExemptEncryption: false
+        # The peak book's Markdown files live in Documents: shown in Files › On My iPhone › Peaker, editable in place.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         NSCameraUsageDescription: Peaker shows the names of the mountains on top of the camera image.
         NSLocationWhenInUseUsageDescription: Peaker uses your location to work out which mountains you can see.
         NSMotionUsageDescription: Peaker uses the compass and motion sensors to know where you are pointing the iPhone.
