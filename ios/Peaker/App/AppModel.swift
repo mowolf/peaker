@@ -117,7 +117,7 @@ final class AppModel {
 
     /// The map appeared: go to the requested place, or around the viewpoint the first time.
     func openMapIfNeeded() {
-        if let target = pendingMapFocus ?? (map.overview == nil ? currentViewpoint : nil) {
+        if let target = pendingMapFocus ?? (map.regional == nil ? currentViewpoint : nil) {
             pendingMapFocus = nil
             map.focus(on: target, distance: map.highlightedPeakID == nil ? nil : 9, settings: settings,
                       packs: packs.snapshot(), packVersion: packs.version)

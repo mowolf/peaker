@@ -441,13 +441,13 @@ private struct MapTopControls: View {
                 ProgressView()
                     .padding(12)
                     .glassEffect(.regular, in: .circle)
-            } else if map.mode == .flat && map.overview == nil {
+            } else if map.mode == .flat && map.regional == nil {
                 Text("Waiting for your position…")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .glassEffect(.regular, in: .capsule)
-            } else if map.mode == .flat && map.overview?.hasData == false {
+            } else if map.mode == .flat && map.regional?.hasData == false {
                 Text("No offline data here")
                     .font(.footnote.weight(.medium))
                     .padding(.horizontal, 14)

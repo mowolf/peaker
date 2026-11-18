@@ -111,12 +111,13 @@ public struct MapCamera: Sendable, Equatable {
     public var fieldOfView: Float
 
     public static let pitchRange: ClosedRange<Float> = 25...90
-    public static let distanceRange: ClosedRange<Float> = 1.5...400
+    /// Beyond the farthest distance the map becomes the globe.
+    public static let distanceRange: ClosedRange<Float> = 1.5...160
 
     /// Flattest allowed view at a distance: zoomed far out the view looks down more, so it shows the country
     /// rather than the horizon beyond the loaded area.
     public static func minimumPitch(distance: Float) -> Float {
-        min(80, pitchRange.lowerBound + max(0, distance - 40) / 4)
+        min(80, pitchRange.lowerBound + max(0, distance - 20) / 2.5)
     }
 
     public init(target: SIMD3<Float>, distance: Float, heading: Float = 0, pitch: Float = 50, fieldOfView: Float = 50) {
