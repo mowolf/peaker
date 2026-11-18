@@ -176,7 +176,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       Swift 6 language mode.
 - [ ] **V-4** Accessibility (Dynamic Type for labels, VoiceOver for the peak list).
 - [ ] **V-5** Localisation (at least EN + DE).
-- [ ] **V-6** App icon, screenshots, privacy policy, TestFlight beta, App Store submission.
+- [ ] **V-6** *(icon done)* App icon, screenshots, privacy policy, TestFlight beta, App Store submission.
 
 ---
 
@@ -194,17 +194,20 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
   On My iPhone › Peaker); milestone 12 moves them to iCloud Drive. Each step is usable on its own.
 - **No third-party dependencies:** a small front matter reader/writer in PeakerKit (tested on Linux), SwiftUI
   `TextEditor` for editing, `AttributedString(markdown:)` for the preview.
-- There is no map in the app; the peak book is a list. A map is a V3 idea.
+- **Wishlist = entries with `status: planned`.** No date needed; the body holds plans (route, huts, notes). "Mark as
+  climbed" turns the same file into the diary entry, so the plans become the start of the story.
+- The peak book is a list in v0.2; the map for browsing entries follows in v0.3.
 
 ## Milestone 10 — Entry files and climbed peaks
 
 - [ ] **B-1** Entry format (PeakerKit `PeakEntry`): YAML front matter + free Markdown body. File name
-      `2026-08-14 Matterhorn.md` (date, first peak; a number is added on clashes). Only the keys below are read;
+      `2026-08-14 Matterhorn.md` (date, first peak; a number is added on clashes); wishlist entries
+      `Matterhorn.md`, renamed with the date once climbed. Only the keys below are read;
       unknown keys and comments are kept unchanged when the app saves, so hand edits survive:
       ```markdown
       ---
       date: 2026-08-14
-      status: summited        # or: attempted
+      status: summited        # or: attempted, planned (wishlist; date optional)
       peaks:
         - id: wd:Q1374        # stable ID (F-5)
           name: Matterhorn
@@ -222,13 +225,15 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
       (`PeakDatabase.peak(id:)` and `peak(near:)`); no match keeps the snapshot.
 - [ ] **B-4** `PeakBook` store (main actor): scans the folder at launch and on changes, keeps the index
       (peak ID → entries) cached in Application Support, writes files atomically.
-- [ ] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed) and the list of this peak's entries.
-- [ ] **B-6** Viewer: climbed peaks get a ✓ on their label (cached in `LabelMemory`, no cost per frame).
+- [ ] **B-5** Peak detail: "Mark as climbed" (today's date, can be changed), "Add to wishlist", and the list of this
+      peak's entries. Climbing a wishlist peak updates its planned entry instead of adding a second file.
+- [ ] **B-6** Viewer: climbed peaks get a ✓, wishlist peaks a ☆ on their label (cached in `LabelMemory`, no cost per frame).
 - [ ] **B-7** On a summit (`isOnSummit`, already in the viewer), offer "Mark <peak> as climbed"; once per peak per day.
 
 ## Milestone 11 — Peak book and diary
 
-- [ ] **B-8** Peak book screen (from Settings or the chip menu): entries grouped by year, search by peak name.
+- [ ] **B-8** Peak book screen (from Settings or the chip menu): tabs Climbed / Wishlist, climbed entries grouped by
+      year, search by peak name.
 - [ ] **B-9** Editor: date, status and peaks at the top, Markdown body with a small toolbar (heading, bold, list),
       Edit/Preview toggle. Autosaves.
 - [ ] **B-10** Add or remove peaks of an entry (search the installed peak databases with FTS).
@@ -245,7 +250,27 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - [ ] **B-15** Conflicts (`NSFileVersion`): keep both as separate files and show a badge. No merge UI in v0.2.
 - [ ] **B-16** Move local entries to iCloud when it becomes available; keep working locally when it is off.
 
-# V0.3 — Photos in entries
+# V0.3 — Map and photos
+
+## Milestone 13 — Peak map
+
+Our own map drawn from the elevation tiles already on the phone: relief and peaks only, no roads or towns. It works
+fully offline, costs no map licence, and can be styled to match the viewer.
+
+- [ ] **M-1** Renderer in PeakerKit: hillshade + contour lines from the 90 m / 30 m tiles (30 m when zoomed in), drawn
+      into map tiles (Web Mercator, 256 px) and cached on disk. Test on Linux like the horizon engine.
+- [ ] **M-2** Look: soft hillshade, thin contours every 100/500 m depending on zoom, water/sea as flat areas
+      (height ≤ 0), light and dark styles. Areas without data are shown plainly as such.
+- [ ] **M-3** Map view: `MapKit` with our tiles as the only layer (`MKTileOverlay`, `canReplaceMapContent`), or a
+      SwiftUI canvas if MapKit gets in the way; pan, zoom, rotate, current position.
+- [ ] **M-4** Peaks on the map from the installed peak databases, thinned by importance per zoom level (as the viewer's
+      label priority); ✓ climbed, ☆ wishlist, tap → peak detail.
+- [ ] **M-5** Peak search (FTS over all installed databases, also alternate names) that flies to the peak.
+- [ ] **M-6** Browse entries: filter Climbed / Wishlist / All, entry pins open the entry; "Show on map" from the
+      peak book and the peak detail.
+- [ ] **M-7** Measure: draw time and memory per tile, cache size limit; tiles of removed countries are dropped.
+
+## Milestone 14 — Photos in entries
 
 - [ ] **I-1** Add photos with `PhotosPicker` or the camera, including the AR snapshot (R-6).
 - [ ] **I-2** Store them next to the entries in `images/` (HEIC, max size setting) and insert a relative Markdown link.
@@ -263,6 +288,7 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 - Share a panorama as an image/link
 - [x] 30 m packs near the viewer *(done: Copernicus GLO-30)*; even higher-resolution packs (lidar DEMs like swissALTI3D, Austrian/German state DEMs) for selected countries
 - Android version (the data pipeline and pack format stay the same)
+- Map extras: hiking routes or GPX tracks of entries, huts and passes
 
 ## Open questions
 
