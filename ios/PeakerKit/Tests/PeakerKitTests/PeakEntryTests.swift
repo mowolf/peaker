@@ -186,3 +186,33 @@ struct PeakEntryTests {
         #expect(DayDate(Date(timeIntervalSince1970: 0), calendar: utc).description == "1970-01-01")
     }
 }
+
+struct PeakEntryMatchingTests {
+    private let current = PeakInfo(id: "wd:Q1374", name: "Matterhorn", coordinate: GeoCoordinate(latitude: 45.9763, longitude: 7.6586),
+                                   elevation: 4478, importance: 1)
+    private let neighbour = PeakInfo(id: "osm:n9", name: "Pic Tyndall", coordinate: GeoCoordinate(latitude: 45.9775, longitude: 7.6555),
+                                     elevation: 4241, importance: 0.5)
+
+    private func resolve(_ peak: PeakEntry.Peak, aliases: [String: String] = [:]) -> PeakInfo? {
+        let all = [current, neighbour]
+        return peak.resolve(
+            byID: { id in all.first { $0.id == (aliases[id] ?? id) } },
+            near: { _, _ in all })
+    }
+
+    @Test func byIDThenAliasThenPosition() {
+        #expect(resolve(.init(id: "wd:Q1374", name: nil))?.id == "wd:Q1374")
+        // The peak got a Wikidata item since the entry was written: its old OSM ID is an alias now.
+        #expect(resolve(.init(id: "osm:n123", name: nil), aliases: ["osm:n123": "wd:Q1374"])?.id == "wd:Q1374")
+        // Unknown ID: the nearest peak within 200 m of the recorded coordinates (Tyndall is ~270 m away).
+        let moved = PeakEntry.Peak(id: "osm:n777", name: "Matterhorn",
+                                   coordinate: GeoCoordinate(latitude: 45.9765, longitude: 7.6590))
+        #expect(resolve(moved)?.id == "wd:Q1374")
+    }
+
+    @Test func noMatchKeepsTheSnapshot() {
+        let far = PeakEntry.Peak(id: nil, name: "Somewhere", coordinate: GeoCoordinate(latitude: 45.99, longitude: 7.70))
+        #expect(resolve(far) == nil)
+        #expect(resolve(.init(id: nil, name: "Matterhorn")) == nil)  // names alone are not matched
+    }
+}

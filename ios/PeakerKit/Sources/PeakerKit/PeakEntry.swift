@@ -139,3 +139,21 @@ public struct PeakEntry: Sendable, Equatable {
         return cleaned.isEmpty ? "Untitled" : cleaned
     }
 }
+
+// MARK: - Matching entries to peaks
+
+public extension PeakEntry.Peak {
+    /// Within this distance (metres) of the snapshot coordinates, the nearest peak is taken to be this one.
+    static let matchRadius = 200.0
+
+    /// The peak in the installed databases this entry refers to: by ID (current or an older alias, which `byID`
+    /// resolves), else the nearest peak within `matchRadius` of the recorded coordinates. Nil keeps the snapshot.
+    func resolve(byID: (String) -> PeakInfo?, near: (GeoCoordinate, Double) -> [PeakInfo]) -> PeakInfo? {
+        if let id, let peak = byID(id) { return peak }
+        guard let coordinate else { return nil }
+        return near(coordinate, Self.matchRadius)
+            .map { ($0, Geo.distance(coordinate, $0.coordinate)) }
+            .filter { $0.1 <= Self.matchRadius }
+            .min { $0.1 < $1.1 }?.0
+    }
+}
