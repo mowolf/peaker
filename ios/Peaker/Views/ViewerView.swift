@@ -286,7 +286,7 @@ private struct SummitPrompt: View {
 
     private func record(_ summit: PeakInfo) {
         do {
-            try withAnimation(.smooth) {
+            _ = try withAnimation(.smooth) {
                 try model.peakBook.markClimbed(summit, on: DayDate(Date()), language: model.settings.peakLanguage)
             }
             failed = false

@@ -20,14 +20,11 @@ public enum CountrySuggestions {
         let valid = entries.filter { $0.bbox.count == 4 }
         let here = countryCode.flatMap { code in valid.first { $0.code.caseInsensitiveCompare(code) == .orderedSame } }
             ?? valid.filter { distance(from: viewpoint, toBox: $0.bbox) == 0 }.min { area($0.bbox) < area($1.bbox) }
-        let nearby = valid
+        let distances: [(entry: Catalog.CountryEntry, metres: Double)] = valid
             .filter { $0.code != here?.code }
             .map { ($0, distance(from: viewpoint, toBox: $0.bbox)) }
-            .filter { $0.1 <= viewDistance }
-            .sorted { $0.1 < $1.1 }
-            .prefix(maxNearby)
-            .map(\.0)
-        return Result(here: here, nearby: Array(nearby))
+        let nearby = distances.filter { $0.metres <= viewDistance }.sorted { $0.metres < $1.metres }
+        return Result(here: here, nearby: nearby.prefix(maxNearby).map(\.entry))
     }
 
     /// Distance (metres) from a point to a [west, south, east, north] box; 0 inside.

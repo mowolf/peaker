@@ -15,72 +15,74 @@ struct PeakBookView: View {
     @State private var error: String?
 
     var body: some View {
-        let book = model.peakBook
-        let shown = filtered(book.entries)
         NavigationStack(path: $path) {
-            List {
-                if tab == .climbed && query.isEmpty && !book.entries.isEmpty {
-                    Section {
-                        StatsCard(stats: PeakBookStats(book.entries.map { ($0.entry, $0.resolvedIDs) }))
+            list
+                .overlay { emptyState(isEmpty: shownEntries.isEmpty) }
+                .navigationTitle("Peak book")
+                .navigationBarTitleDisplayMode(.inline)
+                .searchable(text: $query, prompt: "Peaks, notes, companions")
+                .safeAreaInset(edge: .top) { tabPicker }
+                .toolbar { toolbar }
+                .navigationDestination(for: String.self) { editor(for: $0) }
+                .modifier(DeleteConfirmation(pendingDelete: $pendingDelete, error: $error))
+                .task { await model.peakBook.reload() }  // pick up edits made in the Files app
+        }
+    }
+
+    // Parts of `body`, kept apart: as one expression it took Xcode over a second to type-check.
+
+    private var shownEntries: [StoredEntry] { filtered(model.peakBook.entries) }
+
+    private var list: some View {
+        let book = model.peakBook
+        return List {
+            if tab == .climbed && query.isEmpty && !book.entries.isEmpty {
+                Section {
+                    StatsCard(stats: PeakBookStats(book.entries.map { ($0.entry, $0.resolvedIDs) }))
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+            ForEach(sections(shownEntries), id: \.title) { section in
+                Section(section.title) {
+                    ForEach(section.entries) { stored in
+                        NavigationLink(value: stored.fileName) { BookRow(stored: stored) }
+                            .swipeActions {
+                                Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = stored }
+                            }
                     }
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                }
-                ForEach(sections(shown), id: \.title) { section in
-                    Section(section.title) {
-                        ForEach(section.entries) { stored in
-                            NavigationLink(value: stored.fileName) { BookRow(stored: stored) }
-                                .swipeActions {
-                                    Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = stored }
-                                }
-                        }
-                    }
                 }
             }
-            .overlay { emptyState(isEmpty: shown.isEmpty) }
-            .navigationTitle("Peak book")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $query, prompt: "Peaks, notes, companions")
-            .safeAreaInset(edge: .top) {
-                Picker("Show", selection: $tab) {
-                    Text("Climbed").tag(Tab.climbed)
-                    Text("Wishlist").tag(Tab.wishlist)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("New Entry", systemImage: "square.and.pencil", action: newEntry)
-                }
-            }
-            .navigationDestination(for: String.self) { fileName in
-                if let stored = book.entries.first(where: { $0.fileName == fileName }) {
-                    EntryEditorView(stored: stored)
-                } else {
-                    ContentUnavailableView("Entry not found", systemImage: "doc.questionmark",
-                                           description: Text("It was deleted or renamed in the Files app."))
-                }
-            }
-            .confirmationDialog("Delete this entry?", isPresented: Binding(get: { pendingDelete != nil },
-                                                                           set: { if !$0 { pendingDelete = nil } }),
-                                titleVisibility: .visible, presenting: pendingDelete) { stored in
-                Button("Delete", role: .destructive) {
-                    do { try withAnimation { try book.delete(stored) } } catch { self.error = error.localizedDescription }
-                }
-            } message: { stored in
-                Text("\(stored.fileName) will be deleted, with all its notes.")
-            }
-            .alert("Couldn't save", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(error ?? "")
-            }
-            .task { await book.reload() }  // pick up edits made in the Files app
+        }
+    }
+
+    private var tabPicker: some View {
+        Picker("Show", selection: $tab) {
+            Text("Climbed").tag(Tab.climbed)
+            Text("Wishlist").tag(Tab.wishlist)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Close", systemImage: "xmark") { dismiss() }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button("New Entry", systemImage: "square.and.pencil", action: newEntry)
+        }
+    }
+
+    @ViewBuilder
+    private func editor(for fileName: String) -> some View {
+        if let stored = model.peakBook.entries.first(where: { $0.fileName == fileName }) {
+            EntryEditorView(stored: stored)
+        } else {
+            ContentUnavailableView("Entry not found", systemImage: "doc.questionmark",
+                                   description: Text("It was deleted or renamed in the Files app."))
         }
     }
 
@@ -142,6 +144,37 @@ struct PeakBookView: View {
         do {
             let stored = try model.peakBook.create(entry, resolvedIDs: [])
             path.append(stored.fileName)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Asks before deleting an entry (swipe action); shows write errors.
+private struct DeleteConfirmation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Binding var pendingDelete: StoredEntry?
+    @Binding var error: String?
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog("Delete this entry?", isPresented: Binding(get: { pendingDelete != nil },
+                                                                           set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible, presenting: pendingDelete) { stored in
+                Button("Delete", role: .destructive) { delete(stored) }
+            } message: { stored in
+                Text("\(stored.fileName) will be deleted, with all its notes.")
+            }
+            .alert("Couldn't save", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(error ?? "")
+            }
+    }
+
+    private func delete(_ stored: StoredEntry) {
+        do {
+            try withAnimation { try model.peakBook.delete(stored) }
         } catch {
             self.error = error.localizedDescription
         }
