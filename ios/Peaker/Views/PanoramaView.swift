@@ -239,7 +239,9 @@ struct PanoramaView: View {
         }
     }
 
-    private static let targetColor = Color.orange
+    /// Search result: white label with dark text, white ring and edge marker.
+    private static let targetColor = Color.white
+    private static let targetText = Color(red: 0.08, green: 0.10, blue: 0.16)
 
     private func drawLabels(_ context: inout GraphicsContext, labels: [PlacedLabel]) {
         for label in labels {
@@ -260,7 +262,8 @@ struct PanoramaView: View {
                 context.stroke(background, with: .color(.white.opacity(0.18)), lineWidth: 0.5)
             }
 
-            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            let textColor = label.isTarget ? Self.targetText : .white
+            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(textColor)
             if let mark = label.mark {
                 let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "star.fill"))
                     .font(.system(size: 12, weight: .semibold))
@@ -268,7 +271,7 @@ struct PanoramaView: View {
                 title = Text("\(symbol) \(title)")
             }
             let detail = Text(" " + label.detail).font(.system(size: 11, weight: .regular))
-                .foregroundStyle(.white.opacity(label.isTarget ? 0.9 : 0.7))
+                .foregroundStyle(textColor.opacity(label.isTarget ? 0.75 : 0.7))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
                          anchor: .leading)
         }
@@ -290,7 +293,7 @@ struct PanoramaView: View {
                          with: .color(Self.targetColor))
             context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
                                                   width: radius * 2, height: radius * 2)),
-                           with: .color(.white.opacity(0.9)), lineWidth: 1.5)
+                           with: .color(.black.opacity(0.25)), lineWidth: 1)
             // Arrow pointing towards the peak.
             var arrow = context
             arrow.translateBy(x: center.x, y: center.y)
@@ -301,7 +304,7 @@ struct PanoramaView: View {
             head.addLine(to: CGPoint(x: -1, y: 0))
             head.addLine(to: CGPoint(x: -5, y: 8))
             head.closeSubpath()
-            arrow.fill(head, with: .color(.white))
+            arrow.fill(head, with: .color(Self.targetText))
             return
         }
         guard let s = pose.project(azimuth: target.azimuth, altitude: target.altitude) else { return }

@@ -48,7 +48,10 @@ struct PeakBookView: View {
                     ForEach(section.entries) { stored in
                         NavigationLink(value: stored.fileName) { BookRow(stored: stored) }
                             .swipeActions {
-                                Button("Delete", systemImage: "trash", role: .destructive) { pendingDelete = stored }
+                                // Not role .destructive: that removes the row at once, while the entry is only
+                                // deleted after the confirmation; the list then no longer matched its data (crash).
+                                Button("Delete", systemImage: "trash") { pendingDelete = stored }
+                                    .tint(.red)
                             }
                             .swipeActions(edge: .leading) {
                                 if let peak = stored.entry.peaks.first, let coordinate = peak.coordinate {

@@ -117,6 +117,10 @@ final class AppModel {
             try? await Task.sleep(for: .milliseconds(200))
             here = currentViewpoint
         }
+        // The peak book must be read first, or the start view can't know your climbs.
+        for _ in 0..<50 where !peakBook.isLoaded {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
         let snapshot = packs.snapshot()
         guard let here else {
             map.showGlobe(center: GeoCoordinate(latitude: 46, longitude: 8), altitude: 6000, settings: settings,
@@ -145,7 +149,7 @@ final class AppModel {
         let climbed = peakBook.entries.filter { $0.entry.status == .summited }  // newest first
         for stored in climbed {
             for (peak, resolved) in zip(stored.entry.peaks, stored.resolvedIDs) {
-                guard let coordinate = peak.coordinate, await map.countryCode(at: coordinate) == country else { continue }
+                guard let coordinate = peak.coordinate, await isIn(country, coordinate) else { continue }
                 if let id = resolved ?? peak.id, let info = PeakDatabase.peaks(ids: [id], in: databases)[id] { return info }
                 return PeakInfo(id: peak.id ?? "entry:\(stored.fileName)", name: peak.displayName,
                                 coordinate: coordinate, elevation: peak.elevation, importance: 1)
@@ -154,9 +158,20 @@ final class AppModel {
         guard let box else { return nil }
         let candidates = await Task.detached { PeakDatabase.highestPeaks(in: databases, box: box) }.value
         for peak in candidates {
-            if await map.countryCode(at: peak.coordinate) == country { return peak }
+            if await isIn(country, peak.coordinate) { return peak }
         }
         return nil
+    }
+
+    /// In the country, or within ~3 km of it: summits on a border (Everest, Matterhorn, Mont Blanc) belong to
+    /// both countries, and the simplified outlines can put the summit point just across.
+    private func isIn(_ country: String, _ c: GeoCoordinate) async -> Bool {
+        let d = 0.03
+        for (dLat, dLon) in [(0.0, 0.0), (d, 0), (-d, 0), (0, d), (0, -d)] {
+            let p = GeoCoordinate(latitude: c.latitude + dLat, longitude: c.longitude + dLon / cos(c.latitude * .pi / 180))
+            if await map.countryCode(at: p) == country { return true }
+        }
+        return false
     }
 
     private static func box(_ entry: Catalog.CountryEntry) -> GeoBox? {
