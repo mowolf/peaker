@@ -63,6 +63,9 @@ private struct ViewerSheets: ViewModifier {
             .sheet(isPresented: $model.showSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $model.showPeakBook) {
+                PeakBookView()
+            }
             .sheet(isPresented: $model.showSearch) {
                 PeakSearchView()
                     .presentationDetents([.medium, .large])
@@ -377,7 +380,7 @@ private struct SearchTargetChip: View {
 
 // MARK: - Bottom controls
 
-/// Gyro (automatic direction) and camera toggles on the left, peak search and settings on the right.
+/// Gyro (automatic direction) and camera toggles on the left; peak book, peak search and settings on the right.
 private struct ControlBar: View {
     @Environment(AppModel.self) private var model
 
@@ -401,6 +404,10 @@ private struct ControlBar: View {
             }
 
             Spacer(minLength: 0)
+
+            GlassCircleButton(title: "Peak book", action: { model.showPeakBook = true }) {
+                Image(systemName: "book").font(.title3)
+            }
 
             GlassCircleButton(title: "Find a peak", action: { model.showSearch = true }) {
                 Image(systemName: "magnifyingglass").font(.title3)

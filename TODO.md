@@ -235,13 +235,15 @@ Python, GDAL/rasterio, runs locally and in CI or as a batch job.
 
 ## Milestone 11 — Peak book and diary
 
-- [ ] **B-8** Peak book screen (from Settings or the chip menu): tabs Climbed / Wishlist, climbed entries grouped by
+- [x] **B-8** Peak book screen (from Settings or the chip menu): tabs Climbed / Wishlist, climbed entries grouped by
       year, search by peak name.
-- [ ] **B-9** Editor: date, status and peaks at the top, Markdown body with a small toolbar (heading, bold, list),
+- [x] **B-9** Editor: date, status and peaks at the top, Markdown body with a small toolbar (heading, bold, list),
       Edit/Preview toggle. Autosaves.
-- [ ] **B-10** Add or remove peaks of an entry (search the installed peak databases with FTS).
-- [ ] **B-11** Statistics: peaks climbed, highest peak, per year and per country.
-- [ ] **B-12** Delete an entry (with confirmation); the file goes, the index follows.
+- [x] **B-10** Add or remove peaks of an entry (search the installed peak databases with FTS).
+- [x] **B-11** Statistics: peaks climbed, summits, highest peak, this year (`PeakBookStats`).
+- [ ] **B-11b** Per country: needs the peak's country in the peak database (a pipeline column); the pack a peak
+      came from is ambiguous in the 50 km border buffer.
+- [x] **B-12** Delete an entry (with confirmation); the file goes, the index follows.
 
 ## Milestone 12 — iCloud Drive
 
