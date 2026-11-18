@@ -164,6 +164,14 @@ final class AppModel {
         return GeoBox(south: entry.bbox[1], north: entry.bbox[3], west: entry.bbox[0], east: entry.bbox[2])
     }
 
+    /// Packs were installed or removed: recompute the view, re-match the peak book, and show the start view's
+    /// country once it is downloaded.
+    func packsChanged() {
+        Task { await recompute() }
+        Task { await peakBook.setDatabases(packs.snapshot().peakDatabases) }
+        countryDataChanged()
+    }
+
     /// The missing country was downloaded: show the start view again with its data.
     func countryDataChanged() {
         guard let missing = missingCountry, packs.isDownloaded(missing.code) else { return }

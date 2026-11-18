@@ -91,7 +91,6 @@ private struct ViewerSheets: ViewModifier {
 /// Orientation, sun refresh, recomputing on setting and pack changes, pausing in the background.
 private struct ViewerLifecycle: ViewModifier {
     @Environment(AppModel.self) private var model
-    @Environment(\.scenePhase) private var scenePhase
 
     func body(content: Content) -> some View {
         content
@@ -113,18 +112,24 @@ private struct ViewerLifecycle: ViewModifier {
                 await model.recompute()
             }
             .onChange(of: model.settings.fixedViewpointID) { Task { await model.recompute() } }
-            .onChange(of: model.packs.version) {
-                Task { await model.recompute() }
-                Task { await model.peakBook.setDatabases(model.packs.snapshot().peakDatabases) }
-            }
+            .onChange(of: model.packs.version) { model.packsChanged() }
             // A new result moves the search target (new viewpoint) or drops it (no longer visible).
             .onChange(of: model.horizonStore.resultID) { model.refreshSearchTarget() }
-            // Camera and motion sensors only run in the peak finder, and not in the background (battery).
+            .modifier(SensorLifecycle())
+    }
+}
+
+/// Camera and motion sensors only run in the peak finder, and not in the background (battery). (Separate from
+/// `ViewerLifecycle`: one long modifier chain took the type checker over 10 s.)
+private struct SensorLifecycle: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
             .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active && model.screen == .finder) }
             .onChange(of: model.screen) { _, screen in model.setActive(screen == .finder) }
             .onAppear { model.setActive(model.screen == .finder) }
-            // The missing country of the start view was downloaded: show it.
-            .onChange(of: model.packs.version) { model.countryDataChanged() }
     }
 }
 
