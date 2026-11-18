@@ -4,12 +4,14 @@ import PeakerKit
 /// One layer of the map: a square of terrain with its style texture, the heights behind both (for label
 /// visibility) and the peaks on it. Built off the main thread; the RealityKit model is made on the main actor.
 ///
-/// Two levels share one scene frame:
+/// Three levels share one scene frame:
 /// - `detail`: 40 km around the view from the full-resolution tiles (30 m where downloaded);
+/// - `regional`: up to 240 km from the 90 m tiles;
 /// - `overview`: up to ~1,800 km from ~700 m overview tiles, with the world around the downloaded data:
 ///   countries without data in black, sea, borders.
 struct MapTerrain: Sendable {
-    enum Level: Sendable { case detail, overview }
+    /// Finest first.
+    enum Level: Sendable, CaseIterable { case detail, regional, overview }
 
     /// Changes with every build, so the scene knows when to swap its model.
     let id = UUID()
@@ -54,6 +56,13 @@ struct MapTerrain: Sendable {
             tiles = await loader.tiles(ids, near: Set(ids), files: packs.tileFiles, files30: packs.tileFiles30,
                                        peaks: peaks, version: request.packVersion)
             meshSamples = 513
+        case .regional:
+            // All peaks for the summit heights burned into the tiles; labels use the important ones.
+            let all = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes)
+            tiles = await loader.tiles(ids, near: [], files: packs.tileFiles, files30: packs.tileFiles30,
+                                       peaks: all, version: request.packVersion)
+            peaks = Array(all.sorted { $0.importance > $1.importance }.prefix(1500))
+            meshSamples = 641
         case .overview:
             peaks = PeakDatabase.peaks(in: packs.peakDatabases, boxes: boxes, limit: 400)
             tiles = await overview.tiles(ids, files: packs.tileFiles)
@@ -61,7 +70,7 @@ struct MapTerrain: Sendable {
         }
         // Stop early when a newer request replaced this one (checked between the expensive steps).
         if Task.isCancelled { return nil }
-        let textureSamples = 2048
+        let textureSamples = request.level == .regional ? 2560 : 2048
         // Where no tile is downloaded there is no height: the texture then shows the country (black) or the sea.
         let heightAt: (Double, Double) -> Float? = { lat, lon in
             tiles[TileID.containing(latitude: lat, longitude: lon)]?.height(latitude: lat, longitude: lon)
@@ -74,7 +83,11 @@ struct MapTerrain: Sendable {
         let texture = mask.map { style.render(textureGrid, countries: $0, exaggeration: request.frame.exaggeration) }
             ?? style.render(textureGrid, exaggeration: request.frame.exaggeration)
         // The overview lies a little under the detailed layer, so the two never flicker where they overlap.
-        let lowered: Float = request.level == .overview ? 0.08 * request.frame.exaggeration : 0
+        let lowered: Float = switch request.level {
+        case .detail: 0
+        case .regional: 0.04 * request.frame.exaggeration
+        case .overview: 0.08 * request.frame.exaggeration
+        }
         let half = request.size / 2
         let inside = peaks.filter { p in
             let n = (p.coordinate.latitude - center.latitude) * 111_320

@@ -25,11 +25,11 @@ struct MapScreen: View {
             let labels = layoutLabels(size: size)
             ZStack {
                 MapSceneView(camera: map.sceneCamera,
-                             entities: map.mode == .globe ? [map.globeEntity]
-                                 : [map.overviewEntity, map.showsDetail ? map.detailEntity : nil],
+                             entities: map.mode == .globe ? (map.globeEntity.map { [$0] } ?? []) : map.sceneEntities,
                              background: map.mode == .globe ? Self.space : backgroundColor)
                     .allowsHitTesting(false)
                 Canvas(rendersAsynchronously: false) { context, _ in
+                    drawBookMarkers(&context, size: size)
                     drawPosition(&context, size: size)
                     drawLabels(&context, labels: labels)
                 }
@@ -215,7 +215,8 @@ struct MapScreen: View {
             }
             let layer = layers[e.layer]
             guard layer.grid.isVisible(e.point, from: eye, frame: layer.frame) else { continue }
-            let priority = e.peak.importance + (mark == nil ? 0 : 0.5) + (isHighlighted ? 100 : 0)
+            // Peaks from the peak book come first (after a search result), so they keep their names.
+            let priority = e.peak.importance + (mark == nil ? 0 : 2) + (isHighlighted ? 100 : 0)
             candidates.append(.init(id: e.peak.id, x: Double(s.x), y: Double(s.y),
                                     width: e.width + (mark == nil ? 0 : PanoramaView.LabelMemory.markWidth),
                                     priority: priority))
@@ -254,6 +255,65 @@ struct MapScreen: View {
             let detail = Text(" " + label.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.75))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
                          anchor: .leading)
+        }
+    }
+
+    /// Climbed peaks (green, with a tick) and wishlist peaks (yellow star) from the peak book, wherever they are in
+    /// view, on the flat map and on the globe: from the entries' own coordinates, so they show even where no
+    /// peak data is loaded and when there is no room for their label.
+    private func drawBookMarkers(_ context: inout GraphicsContext, size: CGSize) {
+        let map = model.map
+        let w = Float(size.width), h = Float(size.height)
+        var seen = Set<String>()
+        // Climbed first: a peak both climbed and on an old wishlist entry shows as climbed.
+        let entries = model.peakBook.entries.filter { $0.entry.status == .summited }
+            + model.peakBook.entries.filter { $0.entry.status == .planned }
+        for stored in entries {
+            let climbed = stored.entry.status == .summited
+            for (peak, resolved) in zip(stored.entry.peaks, stored.resolvedIDs) {
+                guard let coordinate = peak.coordinate else { continue }
+                let key = resolved ?? peak.id ?? "\(coordinate.latitude),\(coordinate.longitude)"
+                guard seen.insert(key).inserted else { continue }
+                let screen: (x: Float, y: Float)?
+                if map.mode == .globe {
+                    screen = map.globe.project(Globe.point(coordinate), width: w, height: h)
+                } else if let frame = map.frame {
+                    var p = frame.point(coordinate, height: peak.elevation ?? 0)
+                    if peak.elevation == nil { p.y = map.groundHeight(x: p.x, z: p.z) ?? 0 }
+                    screen = map.camera.project(p, width: w, height: h).map { ($0.x, $0.y) }
+                } else {
+                    screen = nil
+                }
+                guard let s = screen, s.x > -20, s.x < w + 20, s.y > -20, s.y < h + 20 else { continue }
+                drawMarker(&context, at: CGPoint(x: CGFloat(s.x), y: CGFloat(s.y)), climbed: climbed,
+                           small: map.mode == .globe)
+            }
+        }
+    }
+
+    private func drawMarker(_ context: inout GraphicsContext, at p: CGPoint, climbed: Bool, small: Bool) {
+        let r: CGFloat = small ? 6 : 9
+        let circle = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+        context.fill(circle, with: .color(.white))
+        let inner = Path(ellipseIn: CGRect(x: p.x - r + 2, y: p.y - r + 2, width: 2 * r - 4, height: 2 * r - 4))
+        context.fill(inner, with: .color(climbed ? .green : .yellow))
+        if climbed {
+            var tick = Path()
+            tick.move(to: CGPoint(x: p.x - r * 0.42, y: p.y + r * 0.02))
+            tick.addLine(to: CGPoint(x: p.x - r * 0.1, y: p.y + r * 0.34))
+            tick.addLine(to: CGPoint(x: p.x + r * 0.45, y: p.y - r * 0.3))
+            context.stroke(tick, with: .color(.white), style: StrokeStyle(lineWidth: small ? 1.5 : 2, lineCap: .round,
+                                                                          lineJoin: .round))
+        } else {
+            var star = Path()
+            for i in 0..<10 {
+                let angle = Double(i) * .pi / 5 - .pi / 2
+                let radius = (i % 2 == 0 ? 0.62 : 0.27) * r
+                let q = CGPoint(x: p.x + CGFloat(cos(angle)) * radius, y: p.y + CGFloat(sin(angle)) * radius)
+                if i == 0 { star.move(to: q) } else { star.addLine(to: q) }
+            }
+            star.closeSubpath()
+            context.fill(star, with: .color(.white))
         }
     }
 
@@ -321,8 +381,8 @@ final class MapLabelMemory {
 /// RealityKit scene without the camera image: the terrain model and a camera that follows `MapCamera`.
 struct MapSceneView: UIViewRepresentable {
     let camera: SceneCamera
-    /// Terrain layers to show (nil entries are skipped).
-    let entities: [ModelEntity?]
+    /// Terrain layers (or the globe) to show.
+    let entities: [ModelEntity]
     let background: UIColor
 
     @MainActor
@@ -350,7 +410,7 @@ struct MapSceneView: UIViewRepresentable {
     func updateUIView(_ view: ARView, context: Context) {
         let c = context.coordinator
         view.environment.background = .color(background)
-        let wanted = entities.compactMap { $0 }
+        let wanted = entities
         if wanted.map(ObjectIdentifier.init) != c.shown.map(ObjectIdentifier.init) {
             for entity in c.shown where !wanted.contains(where: { $0 === entity }) { entity.removeFromParent() }
             for entity in wanted where entity.parent == nil { c.anchor.addChild(entity) }
