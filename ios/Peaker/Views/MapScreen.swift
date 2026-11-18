@@ -27,6 +27,7 @@ struct MapScreen: View {
                              background: map.mode == .globe ? Self.space : backgroundColor)
                     .allowsHitTesting(false)
                 Canvas(rendersAsynchronously: false) { context, _ in
+                    drawLeaders(&context, labels: labels)
                     drawBookMarkers(&context, size: size)
                     drawPosition(&context, size: size)
                     drawLabels(&context, labels: labels)
@@ -236,33 +237,38 @@ struct MapScreen: View {
         }
     }
 
-    private func drawLabels(_ context: inout GraphicsContext, labels: [MapLabel]) {
+    /// Leader lines and summit dots: drawn first, so peak book markers and labels lie on top of them.
+    private func drawLeaders(_ context: inout GraphicsContext, labels: [MapLabel]) {
         for label in labels {
-            let color: Color = .white
             var leader = Path()
             leader.move(to: label.summit)
             leader.addLine(to: CGPoint(x: label.summit.x, y: label.frame.maxY))
+            let color: Color = label.isHighlighted ? .blue : .white
             context.stroke(leader, with: .color(color.opacity(0.9)), lineWidth: label.isHighlighted ? 2 : 1)
             context.fill(Path(ellipseIn: CGRect(x: label.summit.x - 3, y: label.summit.y - 3, width: 6, height: 6)),
                          with: .color(color))
+        }
+    }
+
+    private func drawLabels(_ context: inout GraphicsContext, labels: [MapLabel]) {
+        for label in labels {
             let background = Path(roundedRect: label.frame, cornerRadius: label.frame.height / 2)
-            // A search result: white label with dark text.
-            context.fill(background, with: .color(label.isHighlighted ? .white : .black.opacity(0.55)))
-            let textColor: Color = label.isHighlighted ? Color(red: 0.08, green: 0.10, blue: 0.16) : .white
-            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(textColor)
+            // The selected peak (search result, "Show on map"): blue.
+            context.fill(background, with: .color(label.isHighlighted ? .blue : .black.opacity(0.55)))
+            var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             if let mark = label.mark {
-                let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "star.fill"))
+                let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "heart.fill"))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(mark == .climbed ? Color.green : Color.yellow)
+                    .foregroundStyle(mark == .climbed ? Color.green : Color.pink)
                 title = Text("\(symbol) \(title)")
             }
-            let detail = Text(" " + label.detail).font(.system(size: 11)).foregroundStyle(textColor.opacity(0.75))
+            let detail = Text(" " + label.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.75))
             context.draw(Text("\(title)\(detail)"), at: CGPoint(x: label.frame.minX + 9, y: label.frame.midY),
                          anchor: .leading)
         }
     }
 
-    /// Climbed peaks (green, with a tick) and wishlist peaks (yellow star) from the peak book, wherever they are in
+    /// Climbed peaks (green, with a tick) and wishlist peaks (pink heart) from the peak book, wherever they are in
     /// view, on the flat map and on the globe: from the entries' own coordinates, so they show even where no
     /// peak data is loaded and when there is no room for their label.
     private func drawBookMarkers(_ context: inout GraphicsContext, size: CGSize) {
@@ -297,28 +303,13 @@ struct MapScreen: View {
 
     private func drawMarker(_ context: inout GraphicsContext, at p: CGPoint, climbed: Bool, small: Bool) {
         let r: CGFloat = small ? 6 : 9
-        let circle = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
-        context.fill(circle, with: .color(.white))
-        let inner = Path(ellipseIn: CGRect(x: p.x - r + 2, y: p.y - r + 2, width: 2 * r - 4, height: 2 * r - 4))
-        context.fill(inner, with: .color(climbed ? .green : .yellow))
-        if climbed {
-            var tick = Path()
-            tick.move(to: CGPoint(x: p.x - r * 0.42, y: p.y + r * 0.02))
-            tick.addLine(to: CGPoint(x: p.x - r * 0.1, y: p.y + r * 0.34))
-            tick.addLine(to: CGPoint(x: p.x + r * 0.45, y: p.y - r * 0.3))
-            context.stroke(tick, with: .color(.white), style: StrokeStyle(lineWidth: small ? 1.5 : 2, lineCap: .round,
-                                                                          lineJoin: .round))
-        } else {
-            var star = Path()
-            for i in 0..<10 {
-                let angle = Double(i) * .pi / 5 - .pi / 2
-                let radius = (i % 2 == 0 ? 0.62 : 0.27) * r
-                let q = CGPoint(x: p.x + CGFloat(cos(angle)) * radius, y: p.y + CGFloat(sin(angle)) * radius)
-                if i == 0 { star.move(to: q) } else { star.addLine(to: q) }
-            }
-            star.closeSubpath()
-            context.fill(star, with: .color(.white))
-        }
+        context.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)), with: .color(.white))
+        context.fill(Path(ellipseIn: CGRect(x: p.x - r + 2, y: p.y - r + 2, width: 2 * r - 4, height: 2 * r - 4)),
+                     with: .color(climbed ? .green : .pink))
+        var symbol = context.resolve(Image(systemName: climbed ? "checkmark" : "heart.fill"))
+        symbol.shading = .color(.white)
+        let s = r * 1.05
+        context.draw(symbol, in: CGRect(x: p.x - s / 2, y: p.y - s / 2, width: s, height: s))
     }
 
     /// Your position (GPS or the fixed viewpoint): a blue dot.

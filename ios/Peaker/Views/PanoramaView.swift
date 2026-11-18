@@ -239,9 +239,9 @@ struct PanoramaView: View {
         }
     }
 
-    /// Search result: white label with dark text, white ring and edge marker.
-    private static let targetColor = Color.white
-    private static let targetText = Color(red: 0.08, green: 0.10, blue: 0.16)
+    /// Search result / selected peak: blue label with white text, blue ring and edge marker.
+    private static let targetColor = Color.blue
+    private static let targetText = Color.white
 
     private func drawLabels(_ context: inout GraphicsContext, labels: [PlacedLabel]) {
         for label in labels {
@@ -265,9 +265,9 @@ struct PanoramaView: View {
             let textColor = label.isTarget ? Self.targetText : .white
             var title = Text(label.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(textColor)
             if let mark = label.mark {
-                let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "star.fill"))
+                let symbol = Text(Image(systemName: mark == .climbed ? "checkmark.circle.fill" : "heart.fill"))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(mark == .climbed ? Color.green : Color.yellow)
+                    .foregroundStyle(mark == .climbed ? Color.green : Color.pink)
                 title = Text("\(symbol) \(title)")
             }
             let detail = Text(" " + label.detail).font(.system(size: 11, weight: .regular))
@@ -293,7 +293,7 @@ struct PanoramaView: View {
                          with: .color(Self.targetColor))
             context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
                                                   width: radius * 2, height: radius * 2)),
-                           with: .color(.black.opacity(0.25)), lineWidth: 1)
+                           with: .color(.white.opacity(0.9)), lineWidth: 1.5)
             // Arrow pointing towards the peak.
             var arrow = context
             arrow.translateBy(x: center.x, y: center.y)
