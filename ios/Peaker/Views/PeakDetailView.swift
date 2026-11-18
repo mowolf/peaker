@@ -5,6 +5,7 @@ struct PeakDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let visible: VisiblePeak
+    @State private var about: (lang: String, title: String, text: String)?
 
     var body: some View {
         let peak = visible.peak
@@ -44,7 +45,9 @@ struct PeakDetailView: View {
                         dismiss()
                     }
 
-                    if let url = wikipediaURL {
+                    if let about {
+                        AboutSection(about: about)
+                    } else if let url = wikipediaURL {
                         Link(destination: url) {
                             Label("Wikipedia", systemImage: "book")
                                 .frame(maxWidth: .infinity)
@@ -60,7 +63,15 @@ struct PeakDetailView: View {
                     Button("Close", systemImage: "xmark", role: .close) { dismiss() }
                 }
             }
+            .task(id: peak.id) { loadAbout() }
         }
+    }
+
+    /// The Wikipedia intro stored with the peak data: in your language, else English, else the local one.
+    private func loadAbout() {
+        let texts = PeakDatabase.texts(peakID: visible.peak.id, in: model.packs.snapshot().peakDatabases)
+        let language = model.settings.peakLanguage
+        about = texts.first { $0.lang == language } ?? texts.first { $0.lang == "en" } ?? texts.first
     }
 
     private var otherNames: [String] {
@@ -127,5 +138,42 @@ private struct FinderRow: View {
         }
         .font(.subheadline.monospacedDigit())
         .foregroundStyle(.secondary)
+    }
+}
+
+/// The peak's Wikipedia intro, readable offline; source and licence (CC BY-SA 4.0) below it, as required.
+private struct AboutSection: View {
+    let about: (lang: String, title: String, text: String)
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("About").font(.headline)
+            Text(about.text)
+                .font(.callout)
+                .lineLimit(expanded ? nil : 6)
+                .textSelection(.enabled)
+            if about.text.count > 320 {
+                Button(expanded ? "Show less" : "Show more") { withAnimation(.smooth) { expanded.toggle() } }
+                    .font(.footnote.weight(.semibold))
+            }
+            HStack(spacing: 4) {
+                Text("From Wikipedia,")
+                if let url = articleURL {
+                    Link(about.title, destination: url)
+                }
+                Text("· CC BY-SA 4.0")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+    }
+
+    private var articleURL: URL? {
+        let title = about.title.replacingOccurrences(of: " ", with: "_")
+        return URL(string: "https://\(about.lang).wikipedia.org/wiki/\(title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title)")
     }
 }

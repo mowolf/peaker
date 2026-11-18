@@ -5,11 +5,13 @@ free for personal and other noncommercial use; commercial use needs a separate l
 holder.
 
 Third-party data is not covered by that license and keeps its own terms, including the elevation tiles and
-peak databases in ios/Peaker/Resources/BundledPacks and those built by pipeline/:
+peak databases built by pipeline/ and the country outlines in ios/Peaker/Resources/CountryOutlines.bin:
 
 - Copernicus DEM: © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under
   COPERNICUS by the European Union and ESA; all rights reserved
 - OpenStreetMap data: © OpenStreetMap contributors, Open Database License (ODbL) 1.0
 - Wikidata: CC0 1.0
 - GeoNames: CC BY 4.0
-- Natural Earth: public domain
+- Natural Earth (country outlines, lakes): public domain
+- Wikipedia article intros in the peak databases: CC BY-SA 4.0, by the Wikipedia contributors; the app names
+  the source article and the license with each text
