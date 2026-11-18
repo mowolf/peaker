@@ -246,6 +246,7 @@ struct MapSceneView: UIViewRepresentable {
     let entity: ModelEntity?
     let background: UIColor
 
+    @MainActor
     final class Coordinator {
         let anchor = AnchorEntity(world: .zero)
         let cameraEntity = PerspectiveCamera()
