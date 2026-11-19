@@ -54,10 +54,9 @@ struct PeakBookView: View {
                                     .tint(.red)
                             }
                             .swipeActions(edge: .leading) {
-                                if let peak = stored.entry.peaks.first, let coordinate = peak.coordinate {
+                                if let peak = stored.entry.peaks.first, peak.coordinate != nil {
                                     Button("Map", systemImage: "map") {
-                                        model.showOnMap(coordinate: coordinate,
-                                                        peakID: stored.resolvedIDs.first.flatMap { $0 } ?? peak.id)
+                                        model.circleOnMap(peak, resolvedID: stored.resolvedIDs.first.flatMap { $0 })
                                     }
                                     .tint(.blue)
                                 }

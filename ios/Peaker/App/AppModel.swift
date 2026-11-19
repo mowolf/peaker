@@ -98,6 +98,21 @@ final class AppModel {
                   packVersion: packs.version)
     }
 
+    /// Map search and the peak book's "Map": switch to the map and circle the peak (cinematic view).
+    func circleOnMap(_ peak: PeakEntry.Peak, resolvedID: String? = nil) {
+        guard let coordinate = peak.coordinate else { return }
+        let databases = packs.snapshot().peakDatabases
+        let id = resolvedID ?? peak.id
+        let info = id.flatMap { PeakDatabase.peaks(ids: [$0], in: databases)[$0] }
+            ?? PeakInfo(id: id ?? "\(coordinate.latitude),\(coordinate.longitude)", name: peak.displayName,
+                        coordinate: coordinate, elevation: peak.elevation, importance: 1)
+        selectedPeak = nil
+        showPeakBook = false
+        showSearch = false
+        screen = .map
+        map.startCinematic(around: info, settings: settings, packs: packs.snapshot(), packVersion: packs.version)
+    }
+
     /// The map around your position (or the start view, the first time).
     func openMap() {
         screen = .map
@@ -233,9 +248,16 @@ final class AppModel {
     }
 
     /// After a recompute: the target's new direction, or no target if it is no longer visible from here.
+    /// After a recompute: the target's new direction when it is visible; a peak found although it isn't
+    /// visible (too far, hidden) keeps its direction from where it was searched.
     func refreshSearchTarget() {
-        guard let id = searchTarget?.id else { return }
-        searchTarget = horizonStore.visiblePeaks.first { $0.id == id }
+        guard let target = searchTarget else { return }
+        if let visible = horizonStore.visiblePeaks.first(where: { $0.id == target.id }) {
+            searchTarget = visible
+        } else if let here = currentViewpoint {
+            searchTarget = VisiblePeak(peak: target.peak, azimuth: Geo.bearing(from: here, to: target.peak.coordinate),
+                                       altitude: target.altitude, distance: Geo.distance(here, target.peak.coordinate))
+        }
     }
 
     /// Degrees to turn right (negative: left) to face the search target.
