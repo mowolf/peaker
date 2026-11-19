@@ -20,7 +20,8 @@ struct PeakBookSection: View {
                           systemImage: climbedToday ? "checkmark.circle.fill" : "checkmark.circle")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.glass)
+                .tint(.primary)  // a normal button, not in the orange accent
                 .disabled(climbedToday)
 
                 Button { toggleWishlist(planned) } label: {
@@ -28,7 +29,7 @@ struct PeakBookSection: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
-                .tint(planned == nil ? nil : .pink)
+                .tint(planned == nil ? .primary : .pink)
             }
             .controlSize(.large)
             .sensoryFeedback(.success, trigger: entries.count)
@@ -48,10 +49,11 @@ struct PeakBookSection: View {
         } message: {
             Text(error ?? "")
         }
-        .confirmationDialog(removalTitle, isPresented: Binding(get: { pendingRemoval != nil },
-                                                               set: { if !$0 { pendingRemoval = nil } }),
-                            titleVisibility: .visible, presenting: pendingRemoval) { stored in
+        .alert(removalTitle, isPresented: Binding(get: { pendingRemoval != nil },
+                                                  set: { if !$0 { pendingRemoval = nil } }),
+               presenting: pendingRemoval) { stored in
             Button("Delete", role: .destructive) { perform { try book.delete(stored) } }
+            Button("Cancel", role: .cancel) {}
         } message: { stored in
             Text("\(stored.fileName) will be deleted, with any notes in it.")
         }

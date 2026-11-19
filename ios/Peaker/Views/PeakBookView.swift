@@ -170,10 +170,13 @@ private struct DeleteConfirmation: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .confirmationDialog("Delete this entry?", isPresented: Binding(get: { pendingDelete != nil },
-                                                                           set: { if !$0 { pendingDelete = nil } }),
-                                titleVisibility: .visible, presenting: pendingDelete) { stored in
+            // An alert, not a confirmation dialog: on iOS 26 a dialog is a popover pinned to the list, and deleting
+            // the row it points at while it closes crashed the app.
+            .alert("Delete this entry?", isPresented: Binding(get: { pendingDelete != nil },
+                                                              set: { if !$0 { pendingDelete = nil } }),
+                   presenting: pendingDelete) { stored in
                 Button("Delete", role: .destructive) { delete(stored) }
+                Button("Cancel", role: .cancel) {}
             } message: { stored in
                 Text("\(stored.fileName) will be deleted, with all its notes.")
             }
@@ -184,11 +187,15 @@ private struct DeleteConfirmation: ViewModifier {
             }
     }
 
+    /// After the alert has closed, so the list changes only once nothing is presented over it.
     private func delete(_ stored: StoredEntry) {
-        do {
-            try withAnimation { try model.peakBook.delete(stored) }
-        } catch {
-            self.error = error.localizedDescription
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            do {
+                try withAnimation { try model.peakBook.delete(stored) }
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
