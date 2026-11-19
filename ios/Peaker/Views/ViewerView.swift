@@ -147,88 +147,26 @@ struct SkyBackground: View {
 
 private struct TopBar: View {
     @Environment(AppModel.self) private var model
-    @Namespace private var glass
 
     var body: some View {
-        GlassEffectContainer(spacing: 10) {
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    // Settings top left, as on the map.
-                    GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
-                        Image(systemName: "gearshape").font(.title3)
-                    }
-                    CompassRibbon()
-                        .frame(maxWidth: 520)
-                        .frame(height: 44)
-                        .glassEffect(.regular, in: .capsule)
-                        .glassEffectID("compass", in: glass)
-                }
-                HStack(spacing: 8) {
-                    ViewpointChip()
-                        .glassEffectID("viewpoint", in: glass)
-                    if model.horizonStore.isComputing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(10)
-                            .glassEffect(.regular, in: .circle)
-                            .glassEffectID("progress", in: glass)
-                            .transition(.blurReplace)
-                    }
-                }
-                .animation(.smooth, value: model.horizonStore.isComputing)
-            }
-        }
-    }
-}
-
-private struct ViewpointChip: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Menu {
-            if model.fixedViewpoint == nil {
-                Button {
-                    model.updatePositionNow()
-                } label: {
-                    Label("Update position now", systemImage: "arrow.clockwise")
-                }
-            } else {
-                Button {
-                    model.choose(nil)
-                } label: {
-                    Label("Use my location", systemImage: "location.fill")
-                }
-                .disabled(model.location.isDenied)
-            }
-            // Fixed viewpoints are chosen in Settings.
-        } label: {
+        VStack(spacing: 10) {
+            HeadingBar()
+            // Settings below the bar, on the left, as on the map.
             HStack(spacing: 8) {
-                Image(systemName: model.isOnSummit ? "mountain.2.fill" : "location.fill")
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(model.viewpointName)
-                        .font(.subheadline.weight(.semibold))
-                    if let detail = model.viewpointDetail {
-                        HStack(spacing: 4) {
-                            Text(detail)
-                            if model.isPositionRough {
-                                Text("· improving…")
-                            }
-                        }
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(model.isPositionRough ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                    }
+                GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
+                    Image(systemName: "gearshape").font(.title3)
                 }
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.horizonStore.isComputing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(10)
+                        .glassEffect(.regular, in: .circle)
+                        .transition(.blurReplace)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .contentShape(Capsule())  // the whole capsule opens the menu, not just the text
-            .glassEffect(.regular, in: .capsule)
+            .animation(.smooth, value: model.horizonStore.isComputing)
         }
-        .buttonStyle(.plain)
     }
 }
 

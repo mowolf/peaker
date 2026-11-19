@@ -49,8 +49,7 @@ struct MapScreen: View {
         .overlay(alignment: .bottom) { MapBottomControls(showsSearch: $showsSearch) }
         .sheet(isPresented: $showsSearch) {
             PeakPickerView(title: "Find on map", allowsTypedName: false) { peak in
-                guard let coordinate = peak.coordinate else { return }
-                model.showOnMap(coordinate: coordinate, peakID: peak.id)
+                model.circleOnMap(peak)
             }
         }
         // The start view the first time (waits for a position), afterwards just what changed meanwhile.
@@ -426,8 +425,11 @@ private struct MapTopControls: View {
 
     var body: some View {
         @Bindable var map = model.map
+        VStack(spacing: 10) {
+        // The same bar as in the peak finder; its compass follows the map's direction.
+        HeadingBar(heading: Double(map.mode == .globe ? map.globe.heading : map.camera.heading))
         HStack(alignment: .top) {
-            // Settings (leftmost) and which peaks to show, top left.
+            // Settings (leftmost) and which peaks to show, below the bar on the left.
             HStack(spacing: 10) {
                 GlassCircleButton(title: "Settings", action: { model.showSettings = true }) {
                     Image(systemName: "gearshape").font(.title3)
@@ -480,6 +482,7 @@ private struct MapTopControls: View {
                     Image(systemName: "location.fill").font(.title3)
                 }
             }
+        }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
