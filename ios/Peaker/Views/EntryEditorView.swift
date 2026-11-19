@@ -46,8 +46,9 @@ struct EntryEditorView: View {
                 if !entry.peaks.contains(peak) { entry.peaks.append(peak) }
             }
         }
-        .confirmationDialog("Delete this entry?", isPresented: $confirmsDelete, titleVisibility: .visible) {
+        .alert("Delete this entry?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive, action: delete)
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("\(stored.fileName) will be deleted, with all its notes.")
         }
