@@ -2,8 +2,8 @@ name: build-packs
 
 # Rebuilds the peak databases of the countries in pipeline/packs.txt (OpenStreetMap + GeoNames, optionally
 # Wikidata) and publishes them to the public data repo mowolf/height-data, next to the elevation tiles that
-# are already published there (tiles are built separately with `peaker-pipeline build-tiles` and rarely change;
-# this job reads their index instead of rebuilding gigabytes of tiles).
+# are already published there (tiles rarely change; this job reads their index instead of rebuilding gigabytes
+# of tiles). For a new country, run it by hand with its code and "build_tiles" on: its tiles are built too.
 # Setup: secret HEIGHT_DATA_TOKEN = fine-grained token with "Contents: read and write" on mowolf/height-data.
 # Without it the packs are built and attached to the run as an artifact.
 
@@ -18,6 +18,10 @@ on:
         description: "Push to mowolf/height-data"
         type: boolean
         default: true
+      build_tiles:
+        description: "Also build the elevation tiles from Copernicus (for countries added to packs.txt)"
+        type: boolean
+        default: false
   schedule:
     - cron: "17 3 * * 1" # Mondays 03:17 UTC: OSM peaks change weekly, tiles don't
 
@@ -74,6 +78,7 @@ jobs:
         working-directory: pipeline
         env:
           INPUT_COUNTRIES: ${{ github.event.inputs.countries }}
+          BUILD_TILES: ${{ github.event.inputs.build_tiles }}
         run: |
           set -euo pipefail
           if [ -n "$INPUT_COUNTRIES" ]; then
@@ -81,12 +86,16 @@ jobs:
           else
             plan=$(sed 's/#.*//' packs.txt | grep -E '^[A-Z]{2}')
           fi
+          # New countries: build their tiles from Copernicus (90 m everywhere, 30 m where mountainous) instead
+          # of reading the published tile index.
+          tiles="--tile-index $TILE_INDEX"
+          if [ "${BUILD_TILES:-false}" = "true" ]; then tiles="--workers 4"; fi
           echo "$plan" | while read -r code args; do
             [ -n "$code" ] || continue
             extra="--no-wikidata"
             case " $args " in *" --wikidata "*) extra=""; args="${args//--wikidata/}";; esac
             echo "::group::$code $args $extra"
-            .venv/bin/peaker-pipeline pack "$code" --res 90 30 --tile-index "$TILE_INDEX" --drop-pbf \
+            .venv/bin/peaker-pipeline pack "$code" --res 90 30 $tiles --drop-pbf \
               --out "$OUT" $args $extra || echo "::warning::$code failed"
             echo "::endgroup::"
           done
@@ -138,7 +147,8 @@ jobs:
           cd ..
           pipeline/.venv/bin/peaker-pipeline publish --out "$OUT" --repo data
           cd data
-          git add -A v1
+          # --sparse: new tile files lie outside the sparse checkout (which holds only the tile indexes).
+          git add --sparse -A v1
           if git diff --cached --quiet; then echo "Nothing changed"; exit 0; fi
           git -c user.name="peaker-bot" -c user.email="peaker-bot@users.noreply.github.com" \
             commit -qm "Weekly peak update ($(date -u +%Y-%m-%d))"

@@ -3,6 +3,7 @@
 # Wikidata is skipped unless the line has --wikidata (querying it tile by tile is slow; OSM carries Wikidata
 # IDs and multilingual names anyway). --clip keeps only the mainland/nearby islands (no overseas territories).
 NP --wikidata
+TH
 
 AD --clip=-32,34,45,72
 AL --clip=-32,34,45,72
